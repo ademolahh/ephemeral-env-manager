@@ -12,7 +12,7 @@ func New() *Docker {
 	return &Docker{}
 }
 
-func (d *Docker) Create(ctx context.Context, id string, temp provider.Template) (string, error) {
+func (d *Docker) Create(ctx context.Context, id, workload string, temp provider.Template) (string, error) {
 	return "", nil
 }
 
