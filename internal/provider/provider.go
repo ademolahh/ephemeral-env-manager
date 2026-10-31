@@ -9,8 +9,6 @@ const (
 	Cloud  Type = "cloud"
 )
 
-type Template struct{}
-
 type Status string
 
 type Provider interface {
