@@ -3,6 +3,8 @@ services:
     build:
       context: .
       target: eem
+    ports:
+      - "8080:8080"
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
     depends_on:
