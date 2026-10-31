@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -151,5 +152,45 @@ func TestSetHourlyPricesErrors(t *testing.T) {
 				t.Errorf("SetHourlyPrices() error = %v, want %q prefix", err, want)
 			}
 		})
+	}
+}
+
+func TestGetHourlyPrices(t *testing.T) {
+	tx := testTx(t)
+	ctx := context.Background()
+
+	if err := SetHourlyPrices(ctx, tx, provider.Docker, dockerPrices); err != nil {
+		t.Fatalf("SetHourlyPrices() error = %v", err)
+	}
+
+	got, err := GetHourlyPrices(ctx, tx, provider.Docker)
+	if err != nil {
+		t.Fatalf("GetHourlyPrices() error = %v", err)
+	}
+	if !got.CPUCore.Equal(dockerPrices.CPUCore) || !got.RAMGB.Equal(dockerPrices.RAMGB) || !got.DiskGB.Equal(dockerPrices.DiskGB) {
+		t.Errorf("GetHourlyPrices() = %+v, want %+v", got, dockerPrices)
+	}
+}
+
+func TestGetHourlyPricesNotFound(t *testing.T) {
+	tx := testTx(t)
+	if err := SetHourlyPrices(context.Background(), tx, provider.Docker, dockerPrices); err != nil {
+		t.Fatalf("SetHourlyPrices() error = %v", err)
+	}
+
+	_, err := GetHourlyPrices(context.Background(), tx, provider.Cloud)
+	if !errors.Is(err, ErrPricesNotFound) {
+		t.Errorf("GetHourlyPrices() error = %v, want ErrPricesNotFound", err)
+	}
+}
+
+func TestGetHourlyPricesQueryError(t *testing.T) {
+	tx := testTx(t)
+	_, err := GetHourlyPrices(context.Background(), tx, "aws")
+	if errors.Is(err, ErrPricesNotFound) {
+		t.Fatalf("GetHourlyPrices() error = %v, want query error", err)
+	}
+	if got := pgCode(err); got != "22P02" {
+		t.Errorf("GetHourlyPrices() error = %v, want invalid enum value", err)
 	}
 }
