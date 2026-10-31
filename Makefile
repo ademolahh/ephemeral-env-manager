@@ -1,4 +1,6 @@
-DATABASE_URL ?= postgres://postgres:postgres@localhost:5432/eem?sslmode=disable
+-include .env
+
+DATABASE_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:5432/$(POSTGRES_DB)?sslmode=disable
 MIGRATIONS_DIR := migrations
 
 .PHONY: migrate-up migrate-down migrate-new
