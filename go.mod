@@ -2,7 +2,11 @@ module github.com/ademolahh/ephemeral-env-manager
 
 go 1.27.2
 
-require github.com/jackc/pgx/v5 v5.12.0
+require (
+	github.com/google/uuid v1.6.0
+	github.com/jackc/pgx/v5 v5.12.0
+	github.com/shopspring/decimal v1.6.0
+)
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
