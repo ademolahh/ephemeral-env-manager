@@ -15,3 +15,13 @@ const (
 	EnvPRReview       EnvType = "PR_REVIEW"
 	EnvProdBug        EnvType = "PROD_BUG"
 )
+
+type EnvStatus string
+
+const (
+	EnvProvisioning EnvStatus = "PROVISIONING"
+	EnvRunning      EnvStatus = "RUNNING"
+	EnvDeleting     EnvStatus = "DELETING"
+	EnvDeleted      EnvStatus = "DELETED"
+	EnvFailed       EnvStatus = "FAILED"
+)
