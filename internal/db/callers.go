@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
@@ -22,6 +23,14 @@ type NewCaller struct {
 	Quota           provider.Resources
 	CostBudget      decimal.Decimal
 	BudgetExpiresAt time.Time
+}
+
+type CallerLimits struct {
+	PermittedEnv  EnvType
+	Quota         provider.Resources
+	CostBudget    decimal.Decimal
+	BudgetSetAt   time.Time
+	BudgetExpired bool
 }
 
 func CreateCaller(ctx context.Context, q DBTX, c NewCaller) (uuid.UUID, error) {
@@ -79,4 +88,27 @@ func SetCallerGithub(ctx context.Context, q DBTX, id uuid.UUID, githubLogin, git
 		return fmt.Errorf("set caller github %s: %w", id, ErrCallerNotFound)
 	}
 	return nil
+}
+
+func LockCaller(ctx context.Context, q DBTX, id uuid.UUID) (CallerLimits, error) {
+	var c CallerLimits
+	err := q.QueryRow(ctx, `
+		SELECT permitted_env, quota_cpu_cores, quota_ram_gb, quota_disk_gb,
+			cost_budget, budget_set_at, budget_expires_at <= now()
+		FROM callers WHERE id = $1
+		FOR UPDATE`, id,
+	).Scan(
+		&c.PermittedEnv, &c.Quota.CPUCore, &c.Quota.RAMGB, &c.Quota.DiskGB,
+		&c.CostBudget, &c.BudgetSetAt, &c.BudgetExpired,
+	)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CallerLimits{}, fmt.Errorf("lock caller %s: %w", id, ErrCallerNotFound)
+	}
+
+	if err != nil {
+		return CallerLimits{}, fmt.Errorf("lock caller %s: %w", id, err)
+	}
+
+	return c, nil
 }

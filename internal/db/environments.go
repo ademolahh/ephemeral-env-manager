@@ -96,41 +96,53 @@ func GetEnvironment(ctx context.Context, q DBTX, id uuid.UUID) (Environment, err
 }
 
 func MarkEnvironmentRunning(ctx context.Context, q DBTX, id uuid.UUID) error {
-	return setStatus(ctx, q, id, EnvRunning, nil, EnvProvisioning)
+	return setStatus(ctx, q, id, EnvRunning, nil, false, EnvProvisioning)
 }
 
 func MarkEnvironmentFailed(ctx context.Context, q DBTX, id uuid.UUID, reason string) error {
-	return setStatus(ctx, q, id, EnvFailed, &reason, EnvProvisioning, EnvRunning)
+	return setStatus(ctx, q, id, EnvFailed, &reason, true, EnvProvisioning, EnvRunning)
 }
 
 func MarkEnvironmentDeleting(ctx context.Context, q DBTX, id uuid.UUID) error {
-	return setStatus(ctx, q, id, EnvDeleting, nil, EnvProvisioning, EnvRunning)
+	return setStatus(ctx, q, id, EnvDeleting, nil, true, EnvProvisioning, EnvRunning)
 }
 
 func MarkEnvironmentDeleted(ctx context.Context, q DBTX, id uuid.UUID) error {
-	return setStatus(ctx, q, id, EnvDeleted, nil, EnvDeleting)
+	return setStatus(ctx, q, id, EnvDeleted, nil, false, EnvDeleting)
 }
 
-func setStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reason *string, from ...EnvStatus) error {
+func setStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reason *string, release bool, from ...EnvStatus) error {
 	allowed := make([]string, len(from))
 	for i, s := range from {
 		allowed[i] = string(s)
 	}
 
-	tag, err := q.Exec(ctx, `
-	UPDATE environments SET
-	status         = $2::env_status,
-			failure_reason = COALESCE($3, failure_reason),
-			deleted_at     = CASE WHEN $2::env_status = 'DELETED' THEN now() ELSE deleted_at END
-		WHERE id = $1 AND status::text = ANY($4)`,
-		id, to, reason, allowed,
-	)
+	var updated int
+	err := q.QueryRow(ctx, `
+		WITH env AS (
+			UPDATE environments SET
+				status         = $2::env_status,
+				failure_reason = COALESCE($3, failure_reason),
+				deleted_at     = CASE WHEN $2::env_status = 'DELETED' THEN now() ELSE deleted_at END
+			WHERE id = $1 AND status::text = ANY($4)
+			RETURNING provider, cpu_cores, ram_gb, disk_gb
+		), released AS (
+			UPDATE capacity_pools p SET
+				available_cpu_cores = LEAST(p.default_cpu_cores, p.available_cpu_cores + env.cpu_cores),
+				available_ram_gb    = LEAST(p.default_ram_gb, p.available_ram_gb + env.ram_gb),
+				available_disk_gb   = LEAST(p.default_disk_gb, p.available_disk_gb + env.disk_gb)
+			FROM env
+			WHERE $5 AND p.provider = env.provider
+		)
+		SELECT count(*) FROM env`,
+		id, to, reason, allowed, release,
+	).Scan(&updated)
 
 	if err != nil {
 		return fmt.Errorf("set environment %s to %s: %w", id, to, err)
 	}
 
-	if tag.RowsAffected() > 0 {
+	if updated > 0 {
 		return nil
 	}
 
@@ -178,4 +190,49 @@ func listEnvironments(ctx context.Context, q DBTX, where string, args ...any) ([
 	}
 
 	return envs, nil
+}
+
+func ListPreemptible(ctx context.Context, q DBTX, p provider.Type, types []EnvType) ([]Environment, error) {
+	names := make([]string, len(types))
+	for i, t := range types {
+		names[i] = string(t)
+	}
+
+	return listEnvironments(ctx, q, `
+		WHERE provider = $1 AND status IN ('PROVISIONING', 'RUNNING') AND type::text = ANY($2)
+		ORDER BY created_at DESC
+		FOR UPDATE`, p, names)
+}
+
+func CallerUsage(ctx context.Context, q DBTX, callerID uuid.UUID) (provider.Resources, error) {
+	var r provider.Resources
+	err := q.QueryRow(ctx, `
+		SELECT COALESCE(sum(cpu_cores), 0), COALESCE(sum(ram_gb), 0), COALESCE(sum(disk_gb), 0)
+		FROM environments
+		WHERE caller_id = $1 AND status IN ('PROVISIONING', 'RUNNING')`, callerID,
+	).Scan(&r.CPUCore, &r.RAMGB, &r.DiskGB)
+
+	if err != nil {
+		return provider.Resources{}, fmt.Errorf("caller usage %s: %w", callerID, err)
+	}
+
+	return r, nil
+}
+
+func CallerSpend(ctx context.Context, q DBTX, callerID uuid.UUID, since time.Time) (decimal.Decimal, error) {
+	var spend decimal.Decimal
+	err := q.QueryRow(ctx, `
+		SELECT COALESCE(sum(
+			hourly_rate * extract(epoch FROM LEAST(COALESCE(deleted_at, expires_at), expires_at) - created_at) / 3600
+		), 0)
+		FROM environments
+		WHERE caller_id = $1 AND type <> 'PROD_BUG' AND status <> 'FAILED' AND created_at >= $2`,
+		callerID, since,
+	).Scan(&spend)
+
+	if err != nil {
+		return decimal.Decimal{}, fmt.Errorf("caller spend %s: %w", callerID, err)
+	}
+
+	return spend, nil
 }

@@ -123,6 +123,9 @@ func setup(t *testing.T) (pgx.Tx, uuid.UUID) {
 	if err := db.SetHourlyPrices(ctx, tx, provider.Docker, dockerPrices); err != nil {
 		t.Fatalf("SetHourlyPrices() error = %v", err)
 	}
+	if err := db.SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000}); err != nil {
+		t.Fatalf("SetCapacityPool() error = %v", err)
+	}
 	callerID, err := db.CreateCaller(ctx, tx, db.NewCaller{
 		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvRegularTesting,
@@ -223,6 +226,9 @@ func TestCreateExplicitProvider(t *testing.T) {
 	cloudPrices := provider.Prices{CPUCore: decimal.RequireFromString("0.05"), RAMGB: decimal.Zero, DiskGB: decimal.Zero}
 	if err := db.SetHourlyPrices(ctx, tx, provider.Cloud, cloudPrices); err != nil {
 		t.Fatalf("SetHourlyPrices() error = %v", err)
+	}
+	if err := db.SetCapacityPool(ctx, tx, provider.Cloud, provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000}); err != nil {
+		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
 	docker := &fakeProvider{}
 	cloud := &fakeProvider{}
@@ -401,8 +407,8 @@ func TestCreateUnknownCaller(t *testing.T) {
 		Workload: "app",
 		Template: dashboard,
 	})
-	if err == nil {
-		t.Fatal("Create() error = nil, want error")
+	if !errors.Is(err, db.ErrCallerNotFound) {
+		t.Fatalf("Create() error = %v, want ErrCallerNotFound", err)
 	}
 	if id != uuid.Nil {
 		t.Errorf("Create() id = %s, want nil", id)

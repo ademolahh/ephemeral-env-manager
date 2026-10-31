@@ -35,9 +35,11 @@ func GetHourlyPrices(ctx context.Context, q DBTX, p provider.Type) (provider.Pri
 		SELECT cpu_cores, ram_gb, disk_gb
 		FROM hourly_prices WHERE provider = $1`, p,
 	).Scan(&prices.CPUCore, &prices.RAMGB, &prices.DiskGB)
+
 	if errors.Is(err, pgx.ErrNoRows) {
 		return provider.Prices{}, fmt.Errorf("get hourly prices %s: %w", p, ErrPricesNotFound)
 	}
+
 	if err != nil {
 		return provider.Prices{}, fmt.Errorf("get hourly prices %s: %w", p, err)
 	}
