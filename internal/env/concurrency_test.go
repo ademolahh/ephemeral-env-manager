@@ -22,10 +22,7 @@ import (
 
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
+	url := dbtest.DatabaseURL(t)
 	ctx := context.Background()
 	schema := "eem_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 

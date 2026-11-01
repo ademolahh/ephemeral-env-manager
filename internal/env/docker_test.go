@@ -2,7 +2,6 @@ package env
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
+	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider/docker"
 )
@@ -19,9 +19,7 @@ const testImage = "redis:7-alpine"
 
 func dockerClient(t *testing.T) *client.Client {
 	t.Helper()
-	if os.Getenv("TEST_DOCKER") == "" {
-		t.Skip("TEST_DOCKER not set")
-	}
+	dbtest.RequireDocker(t)
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		t.Fatalf("docker client: %v", err)

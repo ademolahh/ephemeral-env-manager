@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
@@ -40,10 +39,7 @@ func TestNewUnreachable(t *testing.T) {
 }
 
 func TestNew(t *testing.T) {
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
+	url := dbtest.DatabaseURL(t)
 	pool, err := New(context.Background(), url)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)

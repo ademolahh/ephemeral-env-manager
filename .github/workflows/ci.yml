@@ -8,10 +8,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      TEST_DOCKER: "1"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - run: go build ./...
-      - run: go test ./...
+      - run: go test -race -count=1 ./...

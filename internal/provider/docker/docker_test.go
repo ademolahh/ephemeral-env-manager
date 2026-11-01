@@ -3,7 +3,6 @@ package docker
 import (
 	"context"
 	"errors"
-	"os"
 	"slices"
 	"testing"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
+	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
@@ -20,9 +20,7 @@ const testImage = "redis:7-alpine"
 
 func testDocker(t *testing.T) *Docker {
 	t.Helper()
-	if os.Getenv("TEST_DOCKER") == "" {
-		t.Skip("TEST_DOCKER not set")
-	}
+	dbtest.RequireDocker(t)
 	d, err := New()
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
