@@ -150,8 +150,8 @@ func (t templateRequest) toTemplate() (provider.Template, error) {
 }
 
 func validResources(what string, r provider.Resources) error {
-	if r.CPUCore < 0 || r.RAMGB < 0 || r.DiskGB < 0 {
-		return fmt.Errorf("%s resources must not be negative", what)
+	if r.CPUCore < 1 || r.RAMGB < 1 || r.DiskGB < 1 {
+		return fmt.Errorf("%s resources must be at least 1 cpu_core, 1 ram_gb and 1 disk_gb", what)
 	}
 	return nil
 }

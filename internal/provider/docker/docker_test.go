@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"os"
 	"slices"
 	"testing"
@@ -248,6 +249,50 @@ func TestEnvList(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := envList(tt.env); !slices.Equal(got, tt.want) {
 				t.Errorf("envList() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCreateRejectsUnlimitedResources(t *testing.T) {
+	d := testDocker(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name string
+		tpl  provider.Template
+	}{
+		{
+			name: "zero workload cpu",
+			tpl:  provider.Template{Workload: provider.Workload{Resources: provider.Resources{RAMGB: 1}}},
+		},
+		{
+			name: "zero service ram",
+			tpl: provider.Template{
+				Workload: provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
+				Services: []provider.Service{{Name: "cache", Image: testImage, Resources: provider.Resources{CPUCore: 1}}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id := newEnvID(t, d)
+
+			_, err := d.Create(ctx, id, testImage, tt.tpl)
+			if !errors.Is(err, ErrUnlimitedResources) {
+				t.Fatalf("Create() error = %v, want ErrUnlimitedResources", err)
+			}
+
+			list, err := d.cli.ContainerList(ctx, client.ContainerListOptions{
+				All:     true,
+				Filters: client.Filters{}.Add("label", envLabel+"="+id),
+			})
+			if err != nil {
+				t.Fatalf("list containers: %v", err)
+			}
+			if len(list.Items) != 0 {
+				t.Errorf("containers left = %d, want 0", len(list.Items))
 			}
 		})
 	}

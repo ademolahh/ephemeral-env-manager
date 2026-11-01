@@ -325,9 +325,27 @@ func TestCreateEnvBadRequest(t *testing.T) {
 		}, want: "positive duration"},
 		{name: "negative workload resources", body: func(t *testing.T) string {
 			return withBody(t, func(m map[string]any) {
-				tpl(m)["workload"].(map[string]any)["resources"] = map[string]any{"cpu_core": -1}
+				tpl(m)["workload"].(map[string]any)["resources"] = map[string]any{"cpu_core": -1, "ram_gb": 1, "disk_gb": 1}
 			})
-		}, want: "must not be negative"},
+		}, want: "must be at least 1"},
+		{name: "zero workload cpu", body: func(t *testing.T) string {
+			return withBody(t, func(m map[string]any) {
+				tpl(m)["workload"].(map[string]any)["resources"] = map[string]any{"cpu_core": 0, "ram_gb": 1, "disk_gb": 1}
+			})
+		}, want: "workload resources must be at least 1"},
+		{name: "workload resources omitted", body: func(t *testing.T) string {
+			return withBody(t, func(m map[string]any) { delete(tpl(m)["workload"].(map[string]any), "resources") })
+		}, want: "workload resources must be at least 1"},
+		{name: "zero service ram", body: func(t *testing.T) string {
+			return withBody(t, func(m map[string]any) {
+				tpl(m)["services"].([]any)[0].(map[string]any)["resources"] = map[string]any{"cpu_core": 1, "ram_gb": 0, "disk_gb": 1}
+			})
+		}, want: "service postgres resources must be at least 1"},
+		{name: "zero service disk", body: func(t *testing.T) string {
+			return withBody(t, func(m map[string]any) {
+				tpl(m)["services"].([]any)[1].(map[string]any)["resources"] = map[string]any{"cpu_core": 1, "ram_gb": 1, "disk_gb": 0}
+			})
+		}, want: "service redis resources must be at least 1"},
 		{name: "port out of range", body: func(t *testing.T) string {
 			return withBody(t, func(m map[string]any) { tpl(m)["workload"].(map[string]any)["ports"] = []int{70000} })
 		}, want: "out of range"},
@@ -353,9 +371,9 @@ func TestCreateEnvBadRequest(t *testing.T) {
 		}, want: "image is required"},
 		{name: "negative service resources", body: func(t *testing.T) string {
 			return withBody(t, func(m map[string]any) {
-				tpl(m)["services"].([]any)[1].(map[string]any)["resources"] = map[string]any{"ram_gb": -4}
+				tpl(m)["services"].([]any)[1].(map[string]any)["resources"] = map[string]any{"cpu_core": 1, "ram_gb": -4, "disk_gb": 1}
 			})
-		}, want: "must not be negative"},
+		}, want: "must be at least 1"},
 		{name: "invalid type", body: func(t *testing.T) string {
 			return withBody(t, func(m map[string]any) { m["type"] = "STAGING" })
 		}, want: "invalid environment type"},
@@ -431,7 +449,7 @@ func TestCreateEnvRejected(t *testing.T) {
 			quota:     provider.Resources{CPUCore: 1000, RAMGB: 1000, DiskGB: 1000},
 			body: func(t *testing.T) string {
 				return withBody(t, func(m map[string]any) {
-					tpl(m)["workload"].(map[string]any)["resources"] = map[string]any{"cpu_core": 95}
+					tpl(m)["workload"].(map[string]any)["resources"] = map[string]any{"cpu_core": 95, "ram_gb": 1, "disk_gb": 1}
 				})
 			},
 			status: http.StatusServiceUnavailable,

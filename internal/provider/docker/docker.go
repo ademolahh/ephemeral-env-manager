@@ -20,6 +20,8 @@ import (
 
 const envLabel = "eem.env"
 
+var ErrUnlimitedResources = errors.New("cpu and ram limits must be at least 1, docker treats 0 as unlimited")
+
 type Docker struct {
 	cli *client.Client
 }
@@ -131,6 +133,10 @@ func (d *Docker) create(ctx context.Context, id, workload string, temp provider.
 }
 
 func (d *Docker) run(ctx context.Context, name, net, alias string, cfg *container.Config, res provider.Resources) (string, error) {
+	if res.CPUCore < 1 || res.RAMGB < 1 {
+		return "", fmt.Errorf("%w: cpu_core %d, ram_gb %d", ErrUnlimitedResources, res.CPUCore, res.RAMGB)
+	}
+
 	if err := d.ensureImage(ctx, cfg.Image); err != nil {
 		return "", err
 	}
