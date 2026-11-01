@@ -32,6 +32,13 @@ func New() (*Docker, error) {
 	return &Docker{cli: cli}, nil
 }
 
+func (d *Docker) Ping(ctx context.Context) error {
+	if _, err := d.cli.Ping(ctx, client.PingOptions{}); err != nil {
+		return fmt.Errorf("ping docker: %w", err)
+	}
+	return nil
+}
+
 func (d *Docker) Create(ctx context.Context, id, workload string, temp provider.Template) (string, error) {
 	containerID, err := d.create(ctx, id, workload, temp)
 	if err != nil {

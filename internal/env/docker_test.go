@@ -78,12 +78,14 @@ func TestCreateDocker(t *testing.T) {
 		},
 	}
 
-	id, err := m.Create(ctx, CreateRequest{
+	created, err := m.Create(ctx, CreateRequest{
 		CallerID: callerID,
 		Type:     db.EnvRegularTesting,
 		Workload: testImage,
 		Template: tpl,
 	})
+	m.Wait()
+	id := created.ID
 	if id != uuid.Nil {
 		t.Cleanup(func() { removeEnv(t, cli, id.String()) })
 	}
@@ -121,7 +123,7 @@ func TestCreateDockerFailure(t *testing.T) {
 	}
 	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: d})
 
-	id, err := m.Create(ctx, CreateRequest{
+	created, err := m.Create(ctx, CreateRequest{
 		CallerID: callerID,
 		Type:     db.EnvRegularTesting,
 		Workload: "eem.invalid/missing:never",
@@ -133,9 +135,11 @@ func TestCreateDockerFailure(t *testing.T) {
 			Workload:        provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
 		},
 	})
-	if err == nil {
-		t.Fatal("Create() error = nil, want error")
+	m.Wait()
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
 	}
+	id := created.ID
 	t.Cleanup(func() { removeEnv(t, cli, id.String()) })
 
 	env, err := db.GetEnvironment(ctx, tx, id)

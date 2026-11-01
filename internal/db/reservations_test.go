@@ -327,3 +327,32 @@ func TestStatusChangeReleaseCappedAtDefault(t *testing.T) {
 func sub(a, b provider.Resources) provider.Resources {
 	return provider.Resources{CPUCore: a.CPUCore - b.CPUCore, RAMGB: a.RAMGB - b.RAMGB, DiskGB: a.DiskGB - b.DiskGB}
 }
+
+func TestEnvironmentByIdempotencyKey(t *testing.T) {
+	tx := testTx(t)
+	ctx := context.Background()
+	callerID := createTestCaller(t, tx, newCaller())
+	e := newEnvironment(callerID)
+	e.IdempotencyKey = new("req-1")
+	id := createTestEnvironment(t, tx, e)
+	createTestEnvironment(t, tx, newEnvironment(callerID))
+
+	got, err := EnvironmentByIdempotencyKey(ctx, tx, callerID, "req-1")
+	if err != nil {
+		t.Fatalf("EnvironmentByIdempotencyKey() error = %v", err)
+	}
+	if got.ID != id {
+		t.Errorf("EnvironmentByIdempotencyKey() id = %s, want %s", got.ID, id)
+	}
+
+	if _, err := EnvironmentByIdempotencyKey(ctx, tx, callerID, "req-2"); !errors.Is(err, ErrEnvNotFound) {
+		t.Errorf("EnvironmentByIdempotencyKey(unknown) error = %v, want ErrEnvNotFound", err)
+	}
+	if _, err := EnvironmentByIdempotencyKey(ctx, tx, uuid.New(), "req-1"); !errors.Is(err, ErrEnvNotFound) {
+		t.Errorf("EnvironmentByIdempotencyKey(other caller) error = %v, want ErrEnvNotFound", err)
+	}
+
+	if _, err := CreateEnvironment(ctx, tx, e); pgCode(err) != "23505" {
+		t.Errorf("CreateEnvironment() duplicate key error = %v, want unique violation", err)
+	}
+}

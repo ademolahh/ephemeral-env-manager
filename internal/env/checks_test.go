@@ -54,7 +54,8 @@ func (f fixture) caller(t *testing.T, mutate func(*db.NewCaller)) uuid.UUID {
 }
 
 func (f fixture) create(callerID uuid.UUID, typ db.EnvType, r provider.Resources) (uuid.UUID, error) {
-	return f.m.Create(context.Background(), CreateRequest{
+	defer f.m.Wait()
+	e, err := f.m.Create(context.Background(), CreateRequest{
 		CallerID: callerID,
 		Type:     typ,
 		Workload: "app:latest",
@@ -66,6 +67,7 @@ func (f fixture) create(callerID uuid.UUID, typ db.EnvType, r provider.Resources
 			Workload:        provider.Workload{Resources: r},
 		},
 	})
+	return e.ID, err
 }
 
 func (f fixture) mustCreate(t *testing.T, callerID uuid.UUID, typ db.EnvType, r provider.Resources) uuid.UUID {
@@ -131,8 +133,8 @@ func TestCreateFailureReleasesReservation(t *testing.T) {
 	f.fake.err = errors.New("boom")
 
 	id, err := f.create(callerID, db.EnvRegularTesting, cpu(2))
-	if err == nil {
-		t.Fatal("Create() error = nil, want provider error")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
 	}
 	if got := f.status(t, id); got != db.EnvFailed {
 		t.Fatalf("status = %s, want %s", got, db.EnvFailed)

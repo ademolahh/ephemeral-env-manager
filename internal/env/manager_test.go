@@ -3,9 +3,6 @@ package env
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -15,57 +12,20 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
+	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
 func testTx(t *testing.T) pgx.Tx {
 	t.Helper()
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
-	ctx := context.Background()
-
-	conn, err := pgx.Connect(ctx, url)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	t.Cleanup(func() { conn.Close(context.Background()) })
-
-	tx, err := conn.Begin(ctx)
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	t.Cleanup(func() { tx.Rollback(context.Background()) })
-
-	if _, err := tx.Exec(ctx, "CREATE SCHEMA eem_test; SET LOCAL search_path TO eem_test"); err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
-
-	files, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.up.sql"))
-	if err != nil {
-		t.Fatalf("glob migrations: %v", err)
-	}
-	if len(files) == 0 {
-		t.Fatal("no migrations found")
-	}
-	sort.Strings(files)
-	for _, f := range files {
-		sql, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatalf("read %s: %v", f, err)
-		}
-		if _, err := tx.Exec(ctx, string(sql)); err != nil {
-			t.Fatalf("apply %s: %v", f, err)
-		}
-	}
-	return tx
+	return dbtest.Tx(t)
 }
 
 type createCall struct {
 	id       string
 	workload string
 	temp     provider.Template
+	ctxErr   error
 }
 
 type fakeProvider struct {
@@ -75,10 +35,10 @@ type fakeProvider struct {
 }
 
 func (f *fakeProvider) Create(ctx context.Context, id, workload string, temp provider.Template) (string, error) {
-	f.calls = append(f.calls, createCall{id: id, workload: workload, temp: temp})
 	if f.onCreate != nil {
 		f.onCreate()
 	}
+	f.calls = append(f.calls, createCall{id: id, workload: workload, temp: temp, ctxErr: ctx.Err()})
 	if f.err != nil {
 		return "", f.err
 	}
@@ -163,7 +123,7 @@ func TestCreate(t *testing.T) {
 	fake := &fakeProvider{}
 	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake})
 
-	id, err := m.Create(ctx, CreateRequest{
+	created, err := m.Create(ctx, CreateRequest{
 		CallerID: callerID,
 		Type:     db.EnvRegularTesting,
 		Workload: "ghcr.io/acme/dashboard:abc123",
@@ -172,6 +132,11 @@ func TestCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	if created.Status != db.EnvProvisioning {
+		t.Errorf("Create() status = %s, want %s", created.Status, db.EnvProvisioning)
+	}
+	m.Wait()
+	id := created.ID
 
 	if len(fake.calls) != 1 {
 		t.Fatalf("provider Create calls = %d, want 1", len(fake.calls))
@@ -234,7 +199,7 @@ func TestCreateExplicitProvider(t *testing.T) {
 	cloud := &fakeProvider{}
 	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: docker, provider.Cloud: cloud})
 
-	id, err := m.Create(ctx, CreateRequest{
+	created, err := m.Create(ctx, CreateRequest{
 		CallerID: callerID,
 		Type:     db.EnvRegularTesting,
 		Provider: provider.Cloud,
@@ -244,6 +209,8 @@ func TestCreateExplicitProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	m.Wait()
+	id := created.ID
 	if len(docker.calls) != 0 || len(cloud.calls) != 1 {
 		t.Errorf("provider calls docker=%d cloud=%d, want 0 and 1", len(docker.calls), len(cloud.calls))
 	}
@@ -266,23 +233,18 @@ func TestCreateProviderFails(t *testing.T) {
 	fake := &fakeProvider{err: errors.New("pull image app:missing: not found")}
 	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake})
 
-	id, err := m.Create(ctx, CreateRequest{
+	created, err := m.Create(ctx, CreateRequest{
 		CallerID: callerID,
 		Type:     db.EnvRegularTesting,
 		Workload: "app:missing",
 		Template: dashboard,
 	})
-	if !errors.Is(err, fake.err) {
-		t.Fatalf("Create() error = %v, want provider error", err)
+	if err != nil {
+		t.Fatalf("Create() error = %v, want nil (provisioning is async)", err)
 	}
-	if id == uuid.Nil {
-		t.Fatal("Create() id = nil, want id of failed environment")
-	}
-	if !strings.HasPrefix(err.Error(), "provision environment "+id.String()+":") {
-		t.Errorf("Create() error = %v, want provision environment prefix", err)
-	}
+	m.Wait()
 
-	env, err := db.GetEnvironment(ctx, tx, id)
+	env, err := db.GetEnvironment(ctx, tx, created.ID)
 	if err != nil {
 		t.Fatalf("GetEnvironment() error = %v", err)
 	}
@@ -294,28 +256,196 @@ func TestCreateProviderFails(t *testing.T) {
 	}
 }
 
-func TestCreateProviderFailsAfterCancel(t *testing.T) {
-	tx, callerID := setup(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	fake := &fakeProvider{err: context.Canceled, onCreate: cancel}
-	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake})
+type panicProvider struct{ fakeProvider }
 
-	id, err := m.Create(ctx, CreateRequest{
+func (p *panicProvider) Create(ctx context.Context, id, workload string, temp provider.Template) (string, error) {
+	panic("docker exploded")
+}
+
+func TestCreateProviderPanics(t *testing.T) {
+	tx, callerID := setup(t)
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: &panicProvider{}})
+
+	created, err := m.Create(context.Background(), CreateRequest{
 		CallerID: callerID,
 		Type:     db.EnvRegularTesting,
-		Workload: "app:latest",
+		Workload: "app",
 		Template: dashboard,
 	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Create() error = %v, want context.Canceled", err)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
 	}
+	m.Wait()
 
-	env, err := db.GetEnvironment(context.Background(), tx, id)
+	env, err := db.GetEnvironment(context.Background(), tx, created.ID)
 	if err != nil {
 		t.Fatalf("GetEnvironment() error = %v", err)
 	}
 	if env.Status != db.EnvFailed {
 		t.Errorf("status = %s, want %s", env.Status, db.EnvFailed)
+	}
+	if env.FailureReason == nil || !strings.Contains(*env.FailureReason, "docker exploded") {
+		t.Errorf("failure_reason = %v, want panic message", env.FailureReason)
+	}
+}
+
+func TestCreateReturnsBeforeProvisioning(t *testing.T) {
+	tx, callerID := setup(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	release := make(chan struct{})
+	fake := &fakeProvider{onCreate: func() { <-release }}
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake})
+
+	created, err := m.Create(ctx, CreateRequest{
+		CallerID: callerID,
+		Type:     db.EnvRegularTesting,
+		Workload: "app:latest",
+		Template: dashboard,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if created.Status != db.EnvProvisioning {
+		t.Errorf("Create() status = %s, want %s", created.Status, db.EnvProvisioning)
+	}
+	cancel()
+	close(release)
+	m.Wait()
+
+	if len(fake.calls) != 1 || fake.calls[0].ctxErr != nil {
+		t.Fatalf("provider calls = %+v, want one call with live context", fake.calls)
+	}
+	env, err := db.GetEnvironment(context.Background(), tx, created.ID)
+	if err != nil {
+		t.Fatalf("GetEnvironment() error = %v", err)
+	}
+	if env.Status != db.EnvRunning {
+		t.Errorf("status = %s, want %s (request cancel must not stop provisioning)", env.Status, db.EnvRunning)
+	}
+}
+
+func TestCreateIdempotent(t *testing.T) {
+	tx, callerID := setup(t)
+	ctx := context.Background()
+	if err := db.SetCallerBudget(ctx, tx, callerID, provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000}, decimal.RequireFromString("10"), time.Now().Add(24*time.Hour)); err != nil {
+		t.Fatalf("SetCallerBudget() error = %v", err)
+	}
+	fake := &fakeProvider{}
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake})
+	req := CreateRequest{
+		CallerID:       callerID,
+		Type:           db.EnvRegularTesting,
+		Workload:       "app",
+		Template:       dashboard,
+		IdempotencyKey: "req-1",
+	}
+
+	first, err := m.Create(ctx, req)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	m.Wait()
+
+	second, err := m.Create(ctx, req)
+	if err != nil {
+		t.Fatalf("Create() retry error = %v", err)
+	}
+	m.Wait()
+
+	if second.ID != first.ID {
+		t.Errorf("retry id = %s, want %s", second.ID, first.ID)
+	}
+	if second.Status != db.EnvRunning {
+		t.Errorf("retry status = %s, want current status %s", second.Status, db.EnvRunning)
+	}
+	if len(fake.calls) != 1 {
+		t.Errorf("provider Create calls = %d, want 1", len(fake.calls))
+	}
+
+	req.IdempotencyKey = "req-2"
+	third, err := m.Create(ctx, req)
+	if err != nil {
+		t.Fatalf("Create() new key error = %v", err)
+	}
+	m.Wait()
+	if third.ID == first.ID {
+		t.Error("new key returned existing environment")
+	}
+
+	req.IdempotencyKey = ""
+	fourth, err := m.Create(ctx, req)
+	if err != nil {
+		t.Fatalf("Create() no key error = %v", err)
+	}
+	m.Wait()
+	fifth, err := m.Create(ctx, req)
+	if err != nil {
+		t.Fatalf("Create() no key again error = %v", err)
+	}
+	m.Wait()
+	if fourth.ID == fifth.ID {
+		t.Error("requests without a key returned the same environment")
+	}
+	if n := countEnvironments(t, tx); n != 4 {
+		t.Errorf("environments = %d, want 4", n)
+	}
+}
+
+func TestCreateIdempotencyKeyPerCaller(t *testing.T) {
+	tx, alice := setup(t)
+	ctx := context.Background()
+	bob, err := db.CreateCaller(ctx, tx, db.NewCaller{
+		Role:            db.RoleUser,
+		PermittedEnv:    db.EnvRegularTesting,
+		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
+		CostBudget:      decimal.RequireFromString("10"),
+		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("CreateCaller() error = %v", err)
+	}
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: &fakeProvider{}})
+
+	a, err := m.Create(ctx, CreateRequest{CallerID: alice, Type: db.EnvRegularTesting, Workload: "app", Template: dashboard, IdempotencyKey: "same"})
+	if err != nil {
+		t.Fatalf("Create(alice) error = %v", err)
+	}
+	m.Wait()
+	b, err := m.Create(ctx, CreateRequest{CallerID: bob, Type: db.EnvRegularTesting, Workload: "app", Template: dashboard, IdempotencyKey: "same"})
+	if err != nil {
+		t.Fatalf("Create(bob) error = %v", err)
+	}
+	m.Wait()
+
+	if a.ID == b.ID {
+		t.Error("callers sharing a key got the same environment")
+	}
+	if b.CallerID != bob {
+		t.Errorf("bob's environment caller = %s, want %s", b.CallerID, bob)
+	}
+}
+
+func TestCreateIdempotentReplaySkipsChecks(t *testing.T) {
+	tx, callerID := setup(t)
+	ctx := context.Background()
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: &fakeProvider{}})
+	req := CreateRequest{CallerID: callerID, Type: db.EnvRegularTesting, Workload: "app", Template: dashboard, IdempotencyKey: "k"}
+
+	first, err := m.Create(ctx, req)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	m.Wait()
+	if err := db.SetCallerBudget(ctx, tx, callerID, provider.Resources{}, decimal.Zero, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SetCallerBudget() error = %v", err)
+	}
+
+	again, err := m.Create(ctx, req)
+	if err != nil {
+		t.Fatalf("Create() replay error = %v, want existing environment despite zero quota", err)
+	}
+	if again.ID != first.ID {
+		t.Errorf("replay id = %s, want %s", again.ID, first.ID)
 	}
 }
 
@@ -377,12 +507,12 @@ func TestCreateRejected(t *testing.T) {
 			}
 			m := NewManager(tx, providers)
 
-			id, err := m.Create(context.Background(), tt.req(callerID))
+			e, err := m.Create(context.Background(), tt.req(callerID))
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("Create() error = %v, want %v", err, tt.want)
 			}
-			if id != uuid.Nil {
-				t.Errorf("Create() id = %s, want nil", id)
+			if e.ID != uuid.Nil {
+				t.Errorf("Create() id = %s, want nil", e.ID)
 			}
 			for pt, p := range providers {
 				if calls := p.(*fakeProvider).calls; len(calls) != 0 {
@@ -401,7 +531,7 @@ func TestCreateUnknownCaller(t *testing.T) {
 	fake := &fakeProvider{}
 	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake})
 
-	id, err := m.Create(context.Background(), CreateRequest{
+	e, err := m.Create(context.Background(), CreateRequest{
 		CallerID: uuid.New(),
 		Type:     db.EnvRegularTesting,
 		Workload: "app",
@@ -410,8 +540,8 @@ func TestCreateUnknownCaller(t *testing.T) {
 	if !errors.Is(err, db.ErrCallerNotFound) {
 		t.Fatalf("Create() error = %v, want ErrCallerNotFound", err)
 	}
-	if id != uuid.Nil {
-		t.Errorf("Create() id = %s, want nil", id)
+	if e.ID != uuid.Nil {
+		t.Errorf("Create() id = %s, want nil", e.ID)
 	}
 	if len(fake.calls) != 0 {
 		t.Errorf("provider Create calls = %d, want 0", len(fake.calls))

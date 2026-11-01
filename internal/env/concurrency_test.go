@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +16,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
+	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
@@ -50,12 +49,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 		}
 	})
 
-	files, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.up.sql"))
-	if err != nil {
-		t.Fatalf("glob migrations: %v", err)
-	}
-	sort.Strings(files)
-	for _, f := range files {
+	for _, f := range dbtest.Migrations(t) {
 		sql, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)
@@ -111,6 +105,7 @@ func concurrentCreates(t *testing.T, m *Manager, callers []uuid.UUID, r provider
 		})
 	}
 	wg.Wait()
+	m.Wait()
 	return ok, errs
 }
 

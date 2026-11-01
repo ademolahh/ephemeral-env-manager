@@ -7,34 +7,34 @@ import (
 )
 
 type Template struct {
-	Name            string        `yaml:"name"`
-	Version         string        `yaml:"version"`
-	Providers       []Type        `yaml:"providers"`
-	DefaultProvider Type          `yaml:"default_provider"`
-	TTL             time.Duration `yaml:"ttl"`
-	Workload        Workload      `yaml:"workload"`
-	Services        []Service     `yaml:"services"`
+	Name            string        `yaml:"name" json:"name"`
+	Version         string        `yaml:"version" json:"version"`
+	Providers       []Type        `yaml:"providers" json:"providers"`
+	DefaultProvider Type          `yaml:"default_provider" json:"default_provider"`
+	TTL             time.Duration `yaml:"ttl" json:"-"`
+	Workload        Workload      `yaml:"workload" json:"workload"`
+	Services        []Service     `yaml:"services" json:"services"`
 }
 
 type Workload struct {
-	Ports       []int             `yaml:"ports"`
-	Resources   Resources         `yaml:"resources"`
-	Healthcheck string            `yaml:"healthcheck"`
-	Env         map[string]string `yaml:"env"`
+	Ports       []int             `yaml:"ports" json:"ports"`
+	Resources   Resources         `yaml:"resources" json:"resources"`
+	Healthcheck string            `yaml:"healthcheck" json:"healthcheck"`
+	Env         map[string]string `yaml:"env" json:"env"`
 }
 
 type Service struct {
-	Name        string            `yaml:"name"`
-	Image       string            `yaml:"image"`
-	Resources   Resources         `yaml:"resources"`
-	Env         map[string]string `yaml:"env"`
-	Healthcheck string            `yaml:"healthcheck"`
+	Name        string            `yaml:"name" json:"name"`
+	Image       string            `yaml:"image" json:"image"`
+	Resources   Resources         `yaml:"resources" json:"resources"`
+	Env         map[string]string `yaml:"env" json:"env"`
+	Healthcheck string            `yaml:"healthcheck" json:"healthcheck"`
 }
 
 type Resources struct {
-	CPUCore int `yaml:"cpu_core"`
-	RAMGB   int `yaml:"ram_gb"`
-	DiskGB  int `yaml:"disk_gb"`
+	CPUCore int `yaml:"cpu_core" json:"cpu_core"`
+	RAMGB   int `yaml:"ram_gb" json:"ram_gb"`
+	DiskGB  int `yaml:"disk_gb" json:"disk_gb"`
 }
 
 type Prices struct {

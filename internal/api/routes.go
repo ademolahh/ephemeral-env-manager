@@ -10,5 +10,5 @@ func Routes(h *Handler) http.Handler {
 	mux.HandleFunc("POST /envs", h.CreateEnv)
 	mux.HandleFunc("GET /envs/{id}", h.GetEnv)
 	mux.HandleFunc("DELETE /envs/{id}", h.DeleteEnv)
-	return mux
+	return h.authenticate(mux)
 }

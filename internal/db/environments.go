@@ -44,6 +44,7 @@ type NewEnvironment struct {
 	TTL             time.Duration
 	TemplateName    string
 	TemplateVersion string
+	IdempotencyKey  *string
 }
 
 const environmentColumns = `
@@ -67,12 +68,12 @@ func CreateEnvironment(ctx context.Context, q DBTX, e NewEnvironment) (uuid.UUID
 		INSERT INTO environments (
 			id, expires_at, type, provider,
 			cpu_cores, ram_gb, disk_gb, hourly_rate,
-			caller_id, template_name, template_version
+			caller_id, template_name, template_version, idempotency_key
 		)
-		VALUES ($1, now() + make_interval(secs => $2), $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		VALUES ($1, now() + make_interval(secs => $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		id, e.TTL.Seconds(), e.Type, e.Provider,
 		e.Resources.CPUCore, e.Resources.RAMGB, e.Resources.DiskGB, e.HourlyRate,
-		e.CallerID, e.TemplateName, e.TemplateVersion,
+		e.CallerID, e.TemplateName, e.TemplateVersion, e.IdempotencyKey,
 	)
 
 	if err != nil {
@@ -90,6 +91,21 @@ func GetEnvironment(ctx context.Context, q DBTX, id uuid.UUID) (Environment, err
 
 	if err != nil {
 		return Environment{}, fmt.Errorf("get environment %s: %w", id, err)
+	}
+
+	return e, nil
+}
+
+func EnvironmentByIdempotencyKey(ctx context.Context, q DBTX, callerID uuid.UUID, key string) (Environment, error) {
+	e, err := scanEnvironment(q.QueryRow(ctx, `
+		SELECT `+environmentColumns+` FROM environments
+		WHERE caller_id = $1 AND idempotency_key = $2`, callerID, key))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Environment{}, fmt.Errorf("environment by idempotency key: %w", ErrEnvNotFound)
+	}
+
+	if err != nil {
+		return Environment{}, fmt.Errorf("environment by idempotency key: %w", err)
 	}
 
 	return e, nil
