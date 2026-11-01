@@ -13,7 +13,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var dotEnvErr error
@@ -71,6 +73,56 @@ func Tx(t *testing.T) pgx.Tx {
 		}
 	}
 	return tx
+}
+
+func Pool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	url := DatabaseURL(t)
+	ctx := context.Background()
+	schema := "eem_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer conn.Close(ctx)
+	if _, err := conn.Exec(ctx, fmt.Sprintf("CREATE SCHEMA %s; SET search_path TO %s", schema, schema)); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+	t.Cleanup(func() {
+		c, err := pgx.Connect(context.Background(), url)
+		if err != nil {
+			t.Errorf("connect for cleanup: %v", err)
+			return
+		}
+		defer c.Close(context.Background())
+		if _, err := c.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE"); err != nil {
+			t.Errorf("drop schema: %v", err)
+		}
+	})
+
+	for _, f := range Migrations(t) {
+		sql, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		if _, err := conn.Exec(ctx, string(sql)); err != nil {
+			t.Fatalf("apply %s: %v", f, err)
+		}
+	}
+
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	cfg.MaxConns = 20
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
 }
 
 func Migrations(t *testing.T) []string {

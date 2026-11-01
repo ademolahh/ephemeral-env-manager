@@ -31,18 +31,13 @@ var (
 
 var envTypes = []db.EnvType{db.EnvRegularTesting, db.EnvPRReview, db.EnvProdBug}
 
-type DB interface {
-	db.DBTX
-	Begin(ctx context.Context) (pgx.Tx, error)
-}
-
 type Manager struct {
-	db        DB
+	db        db.DBTX
 	providers map[provider.Type]provider.Provider
 	wg        sync.WaitGroup
 }
 
-func NewManager(q DB, providers map[provider.Type]provider.Provider) *Manager {
+func NewManager(q db.DBTX, providers map[provider.Type]provider.Provider) *Manager {
 	return &Manager{db: q, providers: providers}
 }
 

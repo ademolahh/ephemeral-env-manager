@@ -3,15 +3,11 @@ package env
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
@@ -19,56 +15,6 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
-
-func testPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	url := dbtest.DatabaseURL(t)
-	ctx := context.Background()
-	schema := "eem_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-
-	conn, err := pgx.Connect(ctx, url)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer conn.Close(ctx)
-	if _, err := conn.Exec(ctx, fmt.Sprintf("CREATE SCHEMA %s; SET search_path TO %s", schema, schema)); err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
-	t.Cleanup(func() {
-		c, err := pgx.Connect(context.Background(), url)
-		if err != nil {
-			t.Errorf("connect for cleanup: %v", err)
-			return
-		}
-		defer c.Close(context.Background())
-		if _, err := c.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE"); err != nil {
-			t.Errorf("drop schema: %v", err)
-		}
-	})
-
-	for _, f := range dbtest.Migrations(t) {
-		sql, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatalf("read %s: %v", f, err)
-		}
-		if _, err := conn.Exec(ctx, string(sql)); err != nil {
-			t.Fatalf("apply %s: %v", f, err)
-		}
-	}
-
-	cfg, err := pgxpool.ParseConfig(url)
-	if err != nil {
-		t.Fatalf("parse config: %v", err)
-	}
-	cfg.ConnConfig.RuntimeParams["search_path"] = schema
-	cfg.MaxConns = 20
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatalf("pool: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
-}
 
 func concurrentCreates(t *testing.T, m *Manager, callers []uuid.UUID, r provider.Resources) (int, []error) {
 	t.Helper()
@@ -140,7 +86,7 @@ func seedCaller(t *testing.T, pool *pgxpool.Pool, quota provider.Resources, budg
 }
 
 func TestConcurrentCreatesRespectQuota(t *testing.T) {
-	pool := testPool(t)
+	pool := dbtest.Pool(t)
 	m := seedPool(t, pool, cpu(1000))
 	callerID := seedCaller(t, pool, cpu(3), "1000")
 
@@ -161,7 +107,7 @@ func TestConcurrentCreatesRespectQuota(t *testing.T) {
 }
 
 func TestConcurrentCreatesRespectBudget(t *testing.T) {
-	pool := testPool(t)
+	pool := dbtest.Pool(t)
 	m := seedPool(t, pool, cpu(1000))
 	callerID := seedCaller(t, pool, cpu(1000), "0.012144")
 
@@ -182,7 +128,7 @@ func TestConcurrentCreatesRespectBudget(t *testing.T) {
 }
 
 func TestConcurrentCreatesRespectCapacity(t *testing.T) {
-	pool := testPool(t)
+	pool := dbtest.Pool(t)
 	m := seedPool(t, pool, cpu(10))
 
 	callers := make([]uuid.UUID, 12)

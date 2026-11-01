@@ -128,6 +128,23 @@ func MarkEnvironmentDeleted(ctx context.Context, q DBTX, id uuid.UUID) error {
 }
 
 func setStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reason *string, release bool, from ...EnvStatus) error {
+	if !release {
+		return updateStatus(ctx, q, id, to, reason, false, from)
+	}
+
+	return pgx.BeginFunc(ctx, q, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			SELECT 1 FROM capacity_pools
+			WHERE provider = (SELECT provider FROM environments WHERE id = $1)
+			FOR UPDATE`, id); err != nil {
+			return fmt.Errorf("set environment %s to %s: lock capacity pool: %w", id, to, err)
+		}
+
+		return updateStatus(ctx, tx, id, to, reason, true, from)
+	})
+}
+
+func updateStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reason *string, release bool, from []EnvStatus) error {
 	allowed := make([]string, len(from))
 	for i, s := range from {
 		allowed[i] = string(s)
