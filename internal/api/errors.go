@@ -34,6 +34,13 @@ func errorStatus(err error) int {
 		errors.Is(err, env.ErrBudgetExpired):
 		return http.StatusForbidden
 
+	case errors.Is(err, db.ErrEnvNotFound),
+		errors.Is(err, db.ErrCallerNotFound):
+		return http.StatusNotFound
+
+	case errors.Is(err, db.ErrInvalidTransition):
+		return http.StatusConflict
+
 	case errors.Is(err, env.ErrCapacityExceeded),
 		errors.Is(err, db.ErrPoolNotFound),
 		errors.Is(err, db.ErrPricesNotFound):

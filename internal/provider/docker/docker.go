@@ -54,11 +54,22 @@ func (d *Docker) Create(ctx context.Context, id, workload string, temp provider.
 }
 
 func (d *Docker) Delete(ctx context.Context, id string) error {
+	if err := d.cleanup(ctx, id); err != nil {
+		return fmt.Errorf("delete env %s: %w", id, err)
+	}
 	return nil
 }
 
 func (d *Docker) Status(ctx context.Context, id string) (provider.Status, error) {
-	return "", nil
+	list, err := d.cli.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: client.Filters{}.Add("label", envLabel+"="+id),
+	})
+	if err != nil {
+		return "", fmt.Errorf("status env %s: list containers: %w", id, err)
+	}
+
+	return aggregateStatus(id, list.Items), nil
 }
 
 func (d *Docker) Exec(ctx context.Context, id string, cmd []string) (string, error) {
@@ -195,18 +206,57 @@ func (d *Docker) cleanup(ctx context.Context, id string) error {
 		return fmt.Errorf("list containers: %w", err)
 	}
 
-	var errs []error
-	for _, c := range list.Items {
-		if _, err := d.cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil && !cerrdefs.IsNotFound(err) {
-			errs = append(errs, fmt.Errorf("remove container %s: %w", c.ID, err))
-		}
+	var wg sync.WaitGroup
+	errs := make([]error, len(list.Items))
+	for i, c := range list.Items {
+		wg.Go(func() {
+			if _, err := d.cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil && !cerrdefs.IsNotFound(err) {
+				errs[i] = fmt.Errorf("remove container %s: %w", c.ID, err)
+			}
+		})
 	}
+	wg.Wait()
 
 	if _, err := d.cli.NetworkRemove(ctx, networkName(id), client.NetworkRemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
 		errs = append(errs, fmt.Errorf("remove network: %w", err))
 	}
 
 	return errors.Join(errs...)
+}
+
+func aggregateStatus(id string, containers []container.Summary) provider.Status {
+	workload := false
+	for _, c := range containers {
+		if slices.Contains(c.Names, "/eem-"+id+"-workload") {
+			workload = true
+		}
+	}
+
+	if !workload {
+		return provider.StatusMissing
+	}
+
+	status := provider.StatusRunning
+	for _, c := range containers {
+		if c.State != container.StateRunning {
+			return provider.StatusStopped
+		}
+
+		if c.Health == nil {
+			continue
+		}
+
+		switch c.Health.Status {
+		case container.Unhealthy:
+			status = provider.StatusUnhealthy
+		case container.Starting:
+			if status == provider.StatusRunning {
+				status = provider.StatusStarting
+			}
+		}
+	}
+
+	return status
 }
 
 func networkName(id string) string {

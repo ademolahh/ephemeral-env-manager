@@ -45,6 +45,7 @@ type envResponse struct {
 	HourlyRate      decimal.Decimal    `json:"hourly_rate"`
 	TemplateName    string             `json:"template_name"`
 	TemplateVersion string             `json:"template_version"`
+	InstanceStatus  provider.Status    `json:"instance_status,omitempty"`
 	FailureReason   *string            `json:"failure_reason,omitempty"`
 	CreatedAt       time.Time          `json:"created_at"`
 	ExpiresAt       time.Time          `json:"expires_at"`
@@ -98,6 +99,44 @@ func (h *Handler) CreateEnv(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Location", "/envs/"+e.ID.String())
 	writeJSON(w, http.StatusAccepted, toEnvResponse(e))
+}
+
+func (h *Handler) GetEnv(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid environment id")
+		return
+	}
+
+	e, status, err := h.envs.Get(r.Context(), callerFrom(r.Context()), id)
+	if err != nil {
+		writeServiceError(w, "get environment", err)
+		return
+	}
+
+	resp := toEnvResponse(e)
+	resp.InstanceStatus = status
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) DeleteEnv(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid environment id")
+		return
+	}
+
+	e, err := h.envs.Delete(r.Context(), callerFrom(r.Context()), id)
+	if err != nil {
+		writeServiceError(w, "delete environment", err)
+		return
+	}
+
+	status := http.StatusOK
+	if e.Status == db.EnvDeleting {
+		status = http.StatusAccepted
+	}
+	writeJSON(w, status, toEnvResponse(e))
 }
 
 func (t templateRequest) toTemplate() (provider.Template, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,15 +30,23 @@ type createCall struct {
 }
 
 type fakeProvider struct {
-	err      error
-	onCreate func()
-	calls    []createCall
+	mu          sync.Mutex
+	err         error
+	deleteErr   error
+	status      provider.Status
+	statusErr   error
+	statusCalls int
+	onCreate    func()
+	calls       []createCall
+	deleted     []string
 }
 
 func (f *fakeProvider) Create(ctx context.Context, id, workload string, temp provider.Template) (string, error) {
 	if f.onCreate != nil {
 		f.onCreate()
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, createCall{id: id, workload: workload, temp: temp, ctxErr: ctx.Err()})
 	if f.err != nil {
 		return "", f.err
@@ -45,10 +54,18 @@ func (f *fakeProvider) Create(ctx context.Context, id, workload string, temp pro
 	return "container-" + id, nil
 }
 
-func (f *fakeProvider) Delete(ctx context.Context, id string) error { return nil }
+func (f *fakeProvider) Delete(ctx context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = append(f.deleted, id)
+	return f.deleteErr
+}
 
 func (f *fakeProvider) Status(ctx context.Context, id string) (provider.Status, error) {
-	return "", nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.statusCalls++
+	return f.status, f.statusErr
 }
 
 func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (string, error) {
@@ -108,10 +125,10 @@ func txNow(t *testing.T, tx pgx.Tx) time.Time {
 	return now
 }
 
-func countEnvironments(t *testing.T, tx pgx.Tx) int {
+func countEnvironments(t *testing.T, q db.DBTX) int {
 	t.Helper()
 	var n int
-	if err := tx.QueryRow(context.Background(), `SELECT count(*) FROM environments`).Scan(&n); err != nil {
+	if err := q.QueryRow(context.Background(), `SELECT count(*) FROM environments`).Scan(&n); err != nil {
 		t.Fatalf("count environments: %v", err)
 	}
 	return n

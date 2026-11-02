@@ -31,7 +31,7 @@ func (f *fakeProvider) Create(ctx context.Context, id, workload string, temp pro
 func (f *fakeProvider) Delete(ctx context.Context, id string) error { return nil }
 
 func (f *fakeProvider) Status(ctx context.Context, id string) (provider.Status, error) {
-	return "", nil
+	return provider.StatusRunning, nil
 }
 
 func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (string, error) {

@@ -11,6 +11,15 @@ const (
 
 type Status string
 
+const (
+	StatusRunning   Status = "running"
+	StatusStarting  Status = "starting"
+	StatusUnhealthy Status = "unhealthy"
+	StatusStopped   Status = "stopped"
+	StatusMissing   Status = "missing"
+	StatusUnknown   Status = "unknown"
+)
+
 type Provider interface {
 	Create(ctx context.Context, id, workload string, temp Template) (string, error)
 	Delete(ctx context.Context, id string) error

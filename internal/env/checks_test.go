@@ -3,26 +3,27 @@ package env
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
+	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
 type fixture struct {
-	tx   pgx.Tx
+	q    db.DBTX
 	m    *Manager
 	fake *fakeProvider
 }
 
 func newFixture(t *testing.T, pool provider.Resources) fixture {
 	t.Helper()
-	tx := testTx(t)
+	tx := dbtest.Pool(t)
 	ctx := context.Background()
 	if err := db.SetHourlyPrices(ctx, tx, provider.Docker, dockerPrices); err != nil {
 		t.Fatalf("SetHourlyPrices() error = %v", err)
@@ -31,7 +32,7 @@ func newFixture(t *testing.T, pool provider.Resources) fixture {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
 	fake := &fakeProvider{}
-	return fixture{tx: tx, m: NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake}), fake: fake}
+	return fixture{q: tx, m: NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake}), fake: fake}
 }
 
 func (f fixture) caller(t *testing.T, mutate func(*db.NewCaller)) uuid.UUID {
@@ -46,7 +47,7 @@ func (f fixture) caller(t *testing.T, mutate func(*db.NewCaller)) uuid.UUID {
 	if mutate != nil {
 		mutate(&c)
 	}
-	id, err := db.CreateCaller(context.Background(), f.tx, c)
+	id, err := db.CreateCaller(context.Background(), f.q, c)
 	if err != nil {
 		t.Fatalf("CreateCaller() error = %v", err)
 	}
@@ -81,7 +82,7 @@ func (f fixture) mustCreate(t *testing.T, callerID uuid.UUID, typ db.EnvType, r 
 
 func (f fixture) status(t *testing.T, id uuid.UUID) db.EnvStatus {
 	t.Helper()
-	e, err := db.GetEnvironment(context.Background(), f.tx, id)
+	e, err := db.GetEnvironment(context.Background(), f.q, id)
 	if err != nil {
 		t.Fatalf("GetEnvironment() error = %v", err)
 	}
@@ -90,7 +91,7 @@ func (f fixture) status(t *testing.T, id uuid.UUID) db.EnvStatus {
 
 func (f fixture) available(t *testing.T) provider.Resources {
 	t.Helper()
-	p, err := db.LockCapacityPool(context.Background(), f.tx, provider.Docker)
+	p, err := db.LockCapacityPool(context.Background(), f.q, provider.Docker)
 	if err != nil {
 		t.Fatalf("LockCapacityPool() error = %v", err)
 	}
@@ -99,7 +100,7 @@ func (f fixture) available(t *testing.T) provider.Resources {
 
 func (f fixture) age(t *testing.T, id uuid.UUID, d time.Duration) {
 	t.Helper()
-	_, err := f.tx.Exec(context.Background(), `
+	_, err := f.q.Exec(context.Background(), `
 		UPDATE environments SET
 			created_at = created_at - make_interval(secs => $2),
 			expires_at = expires_at - make_interval(secs => $2)
@@ -208,7 +209,7 @@ func TestCreateQuota(t *testing.T) {
 
 	f.mustCreate(t, callerID, db.EnvRegularTesting, provider.Resources{CPUCore: 1, RAMGB: 4, DiskGB: 5})
 
-	if err := db.MarkEnvironmentDeleting(context.Background(), f.tx, first); err != nil {
+	if err := db.MarkEnvironmentDeleting(context.Background(), f.q, first); err != nil {
 		t.Fatalf("MarkEnvironmentDeleting() error = %v", err)
 	}
 	if _, err := f.create(callerID, db.EnvRegularTesting, provider.Resources{CPUCore: 3, RAMGB: 4, DiskGB: 5}); err != nil {
@@ -307,8 +308,8 @@ func TestCreateCapacityProdBugFullPool(t *testing.T) {
 	}
 
 	f.mustCreate(t, callerID, db.EnvProdBug, cpu(1))
-	if got := f.status(t, first); got != db.EnvDeleting {
-		t.Errorf("PR_REVIEW status = %s, want %s (preempted once pool is full)", got, db.EnvDeleting)
+	if got := f.status(t, first); got != db.EnvDeleted {
+		t.Errorf("PR_REVIEW status = %s, want %s (preempted once pool is full)", got, db.EnvDeleted)
 	}
 	if _, err := f.create(callerID, db.EnvProdBug, cpu(9)); !errors.Is(err, ErrCapacityExceeded) {
 		t.Errorf("Create() PROD_BUG with nothing to preempt error = %v, want ErrCapacityExceeded", err)
@@ -325,8 +326,11 @@ func TestCreatePreemptsNewestLowerPriority(t *testing.T) {
 
 	id := f.mustCreate(t, callerID, db.EnvPRReview, cpu(4))
 
-	if got := f.status(t, newer); got != db.EnvDeleting {
-		t.Errorf("newer REGULAR_TESTING status = %s, want %s", got, db.EnvDeleting)
+	if got := f.status(t, newer); got != db.EnvDeleted {
+		t.Errorf("newer REGULAR_TESTING status = %s, want %s", got, db.EnvDeleted)
+	}
+	if got := f.fake.deleted; len(got) != 1 || got[0] != newer.String() {
+		t.Errorf("provider Delete calls = %v, want [%s]", got, newer)
 	}
 	if got := f.status(t, older); got != db.EnvRunning {
 		t.Errorf("older REGULAR_TESTING status = %s, want %s", got, db.EnvRunning)
@@ -349,8 +353,8 @@ func TestCreatePreemptsLowestPriorityFirst(t *testing.T) {
 
 	f.mustCreate(t, callerID, db.EnvProdBug, cpu(5))
 
-	if got := f.status(t, regular); got != db.EnvDeleting {
-		t.Errorf("REGULAR_TESTING status = %s, want %s", got, db.EnvDeleting)
+	if got := f.status(t, regular); got != db.EnvDeleted {
+		t.Errorf("REGULAR_TESTING status = %s, want %s", got, db.EnvDeleted)
 	}
 	if got := f.status(t, review); got != db.EnvRunning {
 		t.Errorf("PR_REVIEW status = %s, want %s", got, db.EnvRunning)
@@ -370,8 +374,8 @@ func TestCreatePreemptsOnlyWhatHelps(t *testing.T) {
 	if got := f.status(t, cpuOnly); got != db.EnvRunning {
 		t.Errorf("cpu-only env status = %s, want %s", got, db.EnvRunning)
 	}
-	if got := f.status(t, ramHeavy); got != db.EnvDeleting {
-		t.Errorf("ram-heavy env status = %s, want %s", got, db.EnvDeleting)
+	if got := f.status(t, ramHeavy); got != db.EnvDeleted {
+		t.Errorf("ram-heavy env status = %s, want %s", got, db.EnvDeleted)
 	}
 }
 
@@ -393,7 +397,7 @@ func TestCreatePreemptionInsufficient(t *testing.T) {
 	if got := f.available(t); got != cpu(1) {
 		t.Errorf("available = %+v, want %+v", got, cpu(1))
 	}
-	if n := countEnvironments(t, f.tx); n != 2 {
+	if n := countEnvironments(t, f.q); n != 2 {
 		t.Errorf("environments = %d, want 2", n)
 	}
 }
@@ -434,6 +438,23 @@ func TestEstimatedCost(t *testing.T) {
 		got := estimatedCost(decimal.RequireFromString(tt.rate), tt.ttl)
 		if !got.Equal(decimal.RequireFromString(tt.want)) {
 			t.Errorf("estimatedCost(%s, %s) = %s, want %s", tt.rate, tt.ttl, got, tt.want)
+		}
+	}
+}
+
+func TestLowerPriority(t *testing.T) {
+	tests := []struct {
+		typ  db.EnvType
+		want []db.EnvType
+	}{
+		{db.EnvRegularTesting, nil},
+		{db.EnvPRReview, []db.EnvType{db.EnvRegularTesting}},
+		{db.EnvProdBug, []db.EnvType{db.EnvRegularTesting, db.EnvPRReview}},
+		{"STAGING", nil},
+	}
+	for _, tt := range tests {
+		if got := lowerPriority(tt.typ); !slices.Equal(got, tt.want) {
+			t.Errorf("lowerPriority(%s) = %v, want %v", tt.typ, got, tt.want)
 		}
 	}
 }

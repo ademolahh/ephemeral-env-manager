@@ -9,6 +9,7 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/google/uuid"
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
@@ -293,5 +294,131 @@ func TestCreateRejectsUnlimitedResources(t *testing.T) {
 				t.Errorf("containers left = %d, want 0", len(list.Items))
 			}
 		})
+	}
+}
+
+func TestDelete(t *testing.T) {
+	d := testDocker(t)
+	ctx := context.Background()
+	id := newEnvID(t, d)
+
+	if _, err := d.Create(ctx, id, testImage, provider.Template{
+		Workload: provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
+		Services: []provider.Service{{Name: "cache", Image: testImage, Resources: provider.Resources{CPUCore: 1, RAMGB: 1}}},
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	if err := d.Delete(ctx, id); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	list, err := d.cli.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: client.Filters{}.Add("label", envLabel+"="+id),
+	})
+	if err != nil {
+		t.Fatalf("list containers: %v", err)
+	}
+	if len(list.Items) != 0 {
+		t.Errorf("containers left = %d, want 0", len(list.Items))
+	}
+	if _, err := d.cli.NetworkInspect(ctx, networkName(id), client.NetworkInspectOptions{}); !cerrdefs.IsNotFound(err) {
+		t.Errorf("network inspect error = %v, want not found", err)
+	}
+
+	if err := d.Delete(ctx, id); err != nil {
+		t.Errorf("Delete() again error = %v, want nil", err)
+	}
+	if err := d.Delete(ctx, uuid.NewString()); err != nil {
+		t.Errorf("Delete() unknown env error = %v, want nil", err)
+	}
+}
+
+func TestAggregateStatus(t *testing.T) {
+	const id = "env-1"
+	workload := func(state container.ContainerState, health container.HealthStatus) container.Summary {
+		c := container.Summary{Names: []string{"/eem-" + id + "-workload"}, State: state}
+		if health != "" {
+			c.Health = &container.HealthSummary{Status: health}
+		}
+		return c
+	}
+	service := func(state container.ContainerState, health container.HealthStatus) container.Summary {
+		c := workload(state, health)
+		c.Names = []string{"/eem-" + id + "-cache"}
+		return c
+	}
+
+	tests := []struct {
+		name       string
+		containers []container.Summary
+		want       provider.Status
+	}{
+		{name: "no containers", want: provider.StatusMissing},
+		{name: "only a service", containers: []container.Summary{service(container.StateRunning, "")}, want: provider.StatusMissing},
+		{name: "running without healthchecks", containers: []container.Summary{workload(container.StateRunning, "")}, want: provider.StatusRunning},
+		{name: "all healthy", containers: []container.Summary{workload(container.StateRunning, container.NoHealthcheck), service(container.StateRunning, container.Healthy)}, want: provider.StatusRunning},
+		{name: "service starting", containers: []container.Summary{workload(container.StateRunning, ""), service(container.StateRunning, container.Starting)}, want: provider.StatusStarting},
+		{name: "unhealthy beats starting", containers: []container.Summary{workload(container.StateRunning, container.Starting), service(container.StateRunning, container.Unhealthy)}, want: provider.StatusUnhealthy},
+		{name: "service exited", containers: []container.Summary{workload(container.StateRunning, ""), service(container.StateExited, "")}, want: provider.StatusStopped},
+		{name: "workload created not started", containers: []container.Summary{workload(container.StateCreated, "")}, want: provider.StatusStopped},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := aggregateStatus(id, tt.containers); got != tt.want {
+				t.Errorf("aggregateStatus() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStatus(t *testing.T) {
+	d := testDocker(t)
+	ctx := context.Background()
+	id := newEnvID(t, d)
+
+	if got, err := d.Status(ctx, id); err != nil || got != provider.StatusMissing {
+		t.Fatalf("Status() before create = %s, %v, want missing", got, err)
+	}
+
+	if _, err := d.Create(ctx, id, testImage, provider.Template{
+		Workload: provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
+		Services: []provider.Service{{Name: "cache", Image: testImage, Resources: provider.Resources{CPUCore: 1, RAMGB: 1}, Healthcheck: "redis-cli ping"}},
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	deadline := time.Now().Add(30 * time.Second)
+	var got provider.Status
+	for time.Now().Before(deadline) {
+		var err error
+		if got, err = d.Status(ctx, id); err != nil {
+			t.Fatalf("Status() error = %v", err)
+		}
+		if got == provider.StatusRunning {
+			break
+		}
+		if got != provider.StatusStarting {
+			t.Fatalf("Status() while starting = %s, want starting or running", got)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if got != provider.StatusRunning {
+		t.Fatalf("Status() = %s, want running once healthy", got)
+	}
+
+	if _, err := d.cli.ContainerStop(ctx, "eem-"+id+"-cache", client.ContainerStopOptions{}); err != nil {
+		t.Fatalf("stop service: %v", err)
+	}
+	if got, err := d.Status(ctx, id); err != nil || got != provider.StatusStopped {
+		t.Errorf("Status() after service stopped = %s, %v, want stopped", got, err)
+	}
+
+	if err := d.Delete(ctx, id); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if got, err := d.Status(ctx, id); err != nil || got != provider.StatusMissing {
+		t.Errorf("Status() after delete = %s, %v, want missing", got, err)
 	}
 }

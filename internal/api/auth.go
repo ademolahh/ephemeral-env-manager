@@ -39,6 +39,17 @@ func (h *Handler) authenticate(next http.Handler) http.Handler {
 	})
 }
 
+func requireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if callerFrom(r.Context()).Role != db.RoleAdmin {
+			writeError(w, http.StatusForbidden, "admin only")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func callerFrom(ctx context.Context) db.AuthenticatedCaller {
 	c, _ := ctx.Value(callerKey{}).(db.AuthenticatedCaller)
 	return c

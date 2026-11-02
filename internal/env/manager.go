@@ -29,6 +29,8 @@ var (
 	ErrCapacityExceeded    = errors.New("capacity pool exhausted")
 )
 
+const statusTimeout = 5 * time.Second
+
 var envTypes = []db.EnvType{db.EnvRegularTesting, db.EnvPRReview, db.EnvProdBug}
 
 type Manager struct {
@@ -69,13 +71,10 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (db.Environment
 		return db.Environment{}, fmt.Errorf("create environment on %s: %w", pt, ErrProviderUnavailable)
 	}
 
-	var (
-		e       db.Environment
-		created bool
-	)
+	var r reservation
 	err := pgx.BeginFunc(ctx, m.db, func(tx pgx.Tx) error {
 		var err error
-		e, created, err = reserve(ctx, tx, pt, req)
+		r, err = reserve(ctx, tx, pt, req)
 		return err
 	})
 
@@ -83,9 +82,87 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (db.Environment
 		return db.Environment{}, fmt.Errorf("create environment: %w", err)
 	}
 
-	if created {
+	bg := context.WithoutCancel(ctx)
+	for _, id := range r.preempted {
+		m.wg.Go(func() { m.teardown(bg, p, id) })
+	}
+
+	if r.created {
+		m.wg.Go(func() { m.provision(bg, p, r.env.ID, req) })
+	}
+
+	return r.env, nil
+}
+
+func (m *Manager) Get(ctx context.Context, caller db.AuthenticatedCaller, id uuid.UUID) (db.Environment, provider.Status, error) {
+	e, err := m.owned(ctx, caller, id)
+	if err != nil {
+		return db.Environment{}, "", fmt.Errorf("get environment: %w", err)
+	}
+
+	if e.Status != db.EnvProvisioning && e.Status != db.EnvRunning {
+		return e, "", nil
+	}
+
+	p, ok := m.providers[e.Provider]
+	if !ok {
+		return e, provider.StatusUnknown, nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, statusTimeout)
+	defer cancel()
+
+	status, err := p.Status(ctx, e.ID.String())
+	if err != nil {
+		log.Printf("status of environment %s: %v", e.ID, err)
+		return e, provider.StatusUnknown, nil
+	}
+
+	return e, status, nil
+}
+
+func (m *Manager) Delete(ctx context.Context, caller db.AuthenticatedCaller, id uuid.UUID) (db.Environment, error) {
+	e, err := m.owned(ctx, caller, id)
+	if err != nil {
+		return db.Environment{}, fmt.Errorf("delete environment: %w", err)
+	}
+
+	return m.Remove(ctx, e)
+}
+
+func (m *Manager) owned(ctx context.Context, caller db.AuthenticatedCaller, id uuid.UUID) (db.Environment, error) {
+	e, err := db.GetEnvironment(ctx, m.db, id)
+	if err != nil {
+		return db.Environment{}, err
+	}
+
+	if e.CallerID != caller.ID && caller.Role != db.RoleAdmin {
+		return db.Environment{}, fmt.Errorf("environment %s: %w", id, db.ErrEnvNotFound)
+	}
+
+	return e, nil
+}
+
+func (m *Manager) Remove(ctx context.Context, e db.Environment) (db.Environment, error) {
+	p, ok := m.providers[e.Provider]
+	if !ok {
+		return db.Environment{}, fmt.Errorf("delete environment on %s: %w", e.Provider, ErrProviderUnavailable)
+	}
+
+	if e.Status == db.EnvProvisioning || e.Status == db.EnvRunning {
+		err := db.MarkEnvironmentDeleting(ctx, m.db, e.ID)
+		if err != nil && !errors.Is(err, db.ErrInvalidTransition) {
+			return db.Environment{}, fmt.Errorf("delete environment: %w", err)
+		}
+
+		if e, err = db.GetEnvironment(ctx, m.db, e.ID); err != nil {
+			return db.Environment{}, fmt.Errorf("delete environment: %w", err)
+		}
+	}
+
+	if e.Status == db.EnvDeleting {
 		bg := context.WithoutCancel(ctx)
-		m.wg.Go(func() { m.provision(bg, p, e.ID, req) })
+		m.wg.Go(func() { m.teardown(bg, p, e.ID) })
 	}
 
 	return e, nil
@@ -107,8 +184,34 @@ func (m *Manager) provision(ctx context.Context, p provider.Provider, id uuid.UU
 		return
 	}
 
-	if err := db.MarkEnvironmentRunning(ctx, m.db, id); err != nil {
+	err := db.MarkEnvironmentRunning(ctx, m.db, id)
+	if errors.Is(err, db.ErrInvalidTransition) {
+		if err := p.Delete(ctx, id.String()); err != nil {
+			log.Printf("remove environment %s deleted while provisioning: %v", id, err)
+		}
+		return
+	}
+
+	if err != nil {
 		log.Printf("provision environment %s: %v", id, err)
+	}
+}
+
+func (m *Manager) teardown(ctx context.Context, p provider.Provider, id uuid.UUID) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("delete environment %s: provider panic: %v", id, r)
+		}
+	}()
+
+	if err := p.Delete(ctx, id.String()); err != nil {
+		log.Printf("delete environment %s: %v", id, err)
+		return
+	}
+
+	err := db.MarkEnvironmentDeleted(ctx, m.db, id)
+	if err != nil && !errors.Is(err, db.ErrInvalidTransition) {
+		log.Printf("mark environment %s deleted: %v", id, err)
 	}
 }
 
@@ -119,15 +222,21 @@ func (m *Manager) fail(ctx context.Context, id uuid.UUID, reason string) {
 	}
 }
 
-func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, req CreateRequest) (db.Environment, bool, error) {
+type reservation struct {
+	env       db.Environment
+	created   bool
+	preempted []uuid.UUID
+}
+
+func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, req CreateRequest) (reservation, error) {
 	rank := priority(req.Type)
 	if rank == 0 {
-		return db.Environment{}, false, fmt.Errorf("%w: %q", ErrInvalidEnvType, req.Type)
+		return reservation{}, fmt.Errorf("%w: %q", ErrInvalidEnvType, req.Type)
 	}
 
 	caller, err := db.LockCaller(ctx, tx, req.CallerID)
 	if err != nil {
-		return db.Environment{}, false, err
+		return reservation{}, err
 	}
 
 	var key *string
@@ -135,52 +244,53 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, req CreateRequest
 		key = &req.IdempotencyKey
 		existing, err := db.EnvironmentByIdempotencyKey(ctx, tx, req.CallerID, req.IdempotencyKey)
 		if err == nil {
-			return existing, false, nil
+			return reservation{env: existing}, nil
 		}
 
 		if !errors.Is(err, db.ErrEnvNotFound) {
-			return db.Environment{}, false, err
+			return reservation{}, err
 		}
 	}
 
 	if rank > priority(caller.PermittedEnv) {
-		return db.Environment{}, false, fmt.Errorf("%s with permission %s: %w", req.Type, caller.PermittedEnv, ErrNotPermitted)
+		return reservation{}, fmt.Errorf("%s with permission %s: %w", req.Type, caller.PermittedEnv, ErrNotPermitted)
 	}
 
 	need := req.Template.TotalResources()
 	usage, err := db.CallerUsage(ctx, tx, req.CallerID)
 	if err != nil {
-		return db.Environment{}, false, err
+		return reservation{}, err
 	}
 
 	if !fits(add(usage, need), caller.Quota) {
-		return db.Environment{}, false, fmt.Errorf("using %+v, requesting %+v, quota %+v: %w", usage, need, caller.Quota, ErrQuotaExceeded)
+		return reservation{}, fmt.Errorf("using %+v, requesting %+v, quota %+v: %w", usage, need, caller.Quota, ErrQuotaExceeded)
 	}
 
 	prices, err := db.GetHourlyPrices(ctx, tx, pt)
 	if err != nil {
-		return db.Environment{}, false, err
+		return reservation{}, err
 	}
 
 	rate := req.Template.HourlyCost(prices)
 	if req.Type != db.EnvProdBug {
 		if caller.BudgetExpired {
-			return db.Environment{}, false, ErrBudgetExpired
+			return reservation{}, ErrBudgetExpired
 		}
 
 		spent, err := db.CallerSpend(ctx, tx, req.CallerID, caller.BudgetSetAt)
 		if err != nil {
-			return db.Environment{}, false, err
+			return reservation{}, err
 		}
 
 		cost := estimatedCost(rate, req.Template.TTL)
 		if spent.Add(cost).GreaterThan(caller.CostBudget) {
-			return db.Environment{}, false, fmt.Errorf("spent %s, estimated %s, budget %s: %w", spent, cost, caller.CostBudget, ErrBudgetExceeded)
+			return reservation{}, fmt.Errorf("spent %s, estimated %s, budget %s: %w", spent, cost, caller.CostBudget, ErrBudgetExceeded)
 		}
 	}
 
-	if err := makeRoom(ctx, tx, pt, req.Type, need); err != nil {
-		return db.Environment{}, false, err
+	preempted, err := makeRoom(ctx, tx, pt, req.Type, need)
+	if err != nil {
+		return reservation{}, err
 	}
 
 	id, err := db.CreateEnvironment(ctx, tx, db.NewEnvironment{
@@ -195,25 +305,25 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, req CreateRequest
 		IdempotencyKey:  key,
 	})
 	if err != nil {
-		return db.Environment{}, false, err
+		return reservation{}, err
 	}
 
 	if err := db.ReserveCapacity(ctx, tx, pt, need); err != nil {
-		return db.Environment{}, false, err
+		return reservation{}, err
 	}
 
 	e, err := db.GetEnvironment(ctx, tx, id)
 	if err != nil {
-		return db.Environment{}, false, err
+		return reservation{}, err
 	}
 
-	return e, true, nil
+	return reservation{env: e, created: true, preempted: preempted}, nil
 }
 
-func makeRoom(ctx context.Context, tx pgx.Tx, pt provider.Type, t db.EnvType, need provider.Resources) error {
+func makeRoom(ctx context.Context, tx pgx.Tx, pt provider.Type, t db.EnvType, need provider.Resources) ([]uuid.UUID, error) {
 	pool, err := db.LockCapacityPool(ctx, tx, pt)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	limit := pool.Default
@@ -227,23 +337,18 @@ func makeRoom(ctx context.Context, tx pgx.Tx, pt provider.Type, t db.EnvType, ne
 
 	free := sub(limit, sub(pool.Default, pool.Available))
 	if fits(need, free) {
-		return nil
+		return nil, nil
 	}
 
-	var lower []db.EnvType
-	for _, et := range envTypes {
-		if priority(et) < priority(t) {
-			lower = append(lower, et)
-		}
-	}
+	lower := lowerPriority(t)
 
 	if len(lower) == 0 {
-		return fmt.Errorf("%s needs %+v, %+v free: %w", pt, need, free, ErrCapacityExceeded)
+		return nil, fmt.Errorf("%s needs %+v, %+v free: %w", pt, need, free, ErrCapacityExceeded)
 	}
 
 	candidates, err := db.ListPreemptible(ctx, tx, pt, lower)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	slices.SortStableFunc(candidates, func(a, b db.Environment) int {
@@ -265,20 +370,30 @@ func makeRoom(ctx context.Context, tx pgx.Tx, pt provider.Type, t db.EnvType, ne
 	}
 
 	if !fits(need, free) {
-		return fmt.Errorf("%s needs %+v, %+v free after preemption: %w", pt, need, free, ErrCapacityExceeded)
+		return nil, fmt.Errorf("%s needs %+v, %+v free after preemption: %w", pt, need, free, ErrCapacityExceeded)
 	}
 
 	for _, id := range victims {
 		if err := db.MarkEnvironmentDeleting(ctx, tx, id); err != nil {
-			return fmt.Errorf("preempt %s: %w", id, err)
+			return nil, fmt.Errorf("preempt %s: %w", id, err)
 		}
 	}
 
-	return nil
+	return victims, nil
 }
 
 func priority(t db.EnvType) int {
 	return slices.Index(envTypes, t) + 1
+}
+
+func lowerPriority(t db.EnvType) []db.EnvType {
+	var lower []db.EnvType
+	for _, et := range envTypes {
+		if priority(et) < priority(t) {
+			lower = append(lower, et)
+		}
+	}
+	return lower
 }
 
 func estimatedCost(rate decimal.Decimal, ttl time.Duration) decimal.Decimal {

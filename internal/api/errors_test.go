@@ -25,7 +25,9 @@ func TestErrorStatus(t *testing.T) {
 		{env.ErrCapacityExceeded, http.StatusServiceUnavailable},
 		{db.ErrPoolNotFound, http.StatusServiceUnavailable},
 		{db.ErrPricesNotFound, http.StatusServiceUnavailable},
-		{db.ErrCallerNotFound, http.StatusInternalServerError},
+		{db.ErrEnvNotFound, http.StatusNotFound},
+		{db.ErrInvalidTransition, http.StatusConflict},
+		{db.ErrCallerNotFound, http.StatusNotFound},
 		{errors.New("connection reset"), http.StatusInternalServerError},
 	}
 	for _, tt := range tests {
