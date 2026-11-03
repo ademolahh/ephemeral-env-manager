@@ -143,6 +143,15 @@ func (m *Manager) owned(ctx context.Context, caller db.AuthenticatedCaller, id u
 	return e, nil
 }
 
+func (m *Manager) Status(ctx context.Context, e db.Environment) (provider.Status, error) {
+	p, ok := m.providers[e.Provider]
+	if !ok {
+		return "", fmt.Errorf("delete environment on %s: %w", e.Provider, ErrProviderUnavailable)
+	}
+
+	return p.Status(ctx, e.ID.String())
+}
+
 func (m *Manager) Remove(ctx context.Context, e db.Environment) (db.Environment, error) {
 	p, ok := m.providers[e.Provider]
 	if !ok {
@@ -170,6 +179,10 @@ func (m *Manager) Remove(ctx context.Context, e db.Environment) (db.Environment,
 
 func (m *Manager) Wait() {
 	m.wg.Wait()
+}
+
+func (m *Manager) List(ctx context.Context, e db.Environment) (any, error) {
+	return m.providers[e.Provider].List(ctx)
 }
 
 func (m *Manager) provision(ctx context.Context, p provider.Provider, id uuid.UUID, req CreateRequest) {
@@ -271,20 +284,16 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, req CreateRequest
 		return reservation{}, err
 	}
 
+	var cost decimal.Decimal
 	rate := req.Template.HourlyCost(prices)
 	if req.Type != db.EnvProdBug {
 		if caller.BudgetExpired {
 			return reservation{}, ErrBudgetExpired
 		}
 
-		spent, err := db.CallerSpend(ctx, tx, req.CallerID, caller.BudgetSetAt)
-		if err != nil {
-			return reservation{}, err
-		}
-
-		cost := estimatedCost(rate, req.Template.TTL)
-		if spent.Add(cost).GreaterThan(caller.CostBudget) {
-			return reservation{}, fmt.Errorf("spent %s, estimated %s, budget %s: %w", spent, cost, caller.CostBudget, ErrBudgetExceeded)
+		cost = estimatedCost(rate, req.Template.TTL)
+		if cost.GreaterThan(caller.CostBudget) {
+			return reservation{}, fmt.Errorf("estimated %s, remaining budget %s: %w", cost, caller.CostBudget, ErrBudgetExceeded)
 		}
 	}
 
@@ -303,6 +312,7 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, req CreateRequest
 		TemplateName:    req.Template.Name,
 		TemplateVersion: req.Template.Version,
 		IdempotencyKey:  key,
+		ReservedCost:    cost,
 	})
 	if err != nil {
 		return reservation{}, err

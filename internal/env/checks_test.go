@@ -129,7 +129,7 @@ func TestCreateFailureReleasesReservation(t *testing.T) {
 	f := newFixture(t, provider.Resources{CPUCore: 10, RAMGB: 10, DiskGB: 10})
 	callerID := f.caller(t, func(c *db.NewCaller) {
 		c.Quota = cpu(2)
-		c.CostBudget = decimal.RequireFromString("0.008096")
+		c.CostBudget = decimal.RequireFromString("0.009")
 	})
 	f.fake.err = errors.New("boom")
 
@@ -264,18 +264,53 @@ func TestCreateBudgetExpired(t *testing.T) {
 	}
 }
 
-func TestCreateBudgetPeriod(t *testing.T) {
-	f := newFixture(t, cpu(100))
-	callerID := f.caller(t, func(c *db.NewCaller) { c.CostBudget = decimal.RequireFromString("0.004048") })
+func (f fixture) balance(t *testing.T, callerID uuid.UUID) decimal.Decimal {
+	t.Helper()
+	c, err := db.LockCaller(context.Background(), f.q, callerID)
+	if err != nil {
+		t.Fatalf("LockCaller() error = %v", err)
+	}
+	return c.CostBudget
+}
 
-	old := f.mustCreate(t, callerID, db.EnvRegularTesting, cpu(1))
+func TestCreateReservesBudget(t *testing.T) {
+	f := newFixture(t, cpu(100))
+	callerID := f.caller(t, func(c *db.NewCaller) { c.CostBudget = decimal.RequireFromString("1") })
+
+	f.mustCreate(t, callerID, db.EnvRegularTesting, cpu(2))
+	if got, want := f.balance(t, callerID), decimal.RequireFromString("0.991904"); !got.Equal(want) {
+		t.Errorf("balance after create = %s, want %s (1 - 2 cpu x 0.004048 x 1h)", got, want)
+	}
+
+	f.mustCreate(t, callerID, db.EnvProdBug, cpu(2))
+	if got, want := f.balance(t, callerID), decimal.RequireFromString("0.991904"); !got.Equal(want) {
+		t.Errorf("balance after PROD_BUG = %s, want %s unchanged (exempt)", got, want)
+	}
+}
+
+func TestCreateBudgetRefundedOnEarlyDelete(t *testing.T) {
+	f := newFixture(t, cpu(100))
+	callerID := f.caller(t, func(c *db.NewCaller) { c.CostBudget = decimal.RequireFromString("0.005") })
+
+	first := f.mustCreate(t, callerID, db.EnvRegularTesting, cpu(1))
 	if _, err := f.create(callerID, db.EnvRegularTesting, cpu(1)); !errors.Is(err, ErrBudgetExceeded) {
 		t.Fatalf("Create() error = %v, want ErrBudgetExceeded", err)
 	}
 
-	f.age(t, old, 48*time.Hour)
+	e, err := db.GetEnvironment(context.Background(), f.q, first)
+	if err != nil {
+		t.Fatalf("GetEnvironment() error = %v", err)
+	}
+	if _, err := f.m.Remove(context.Background(), e); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+	f.m.Wait()
+
+	if got := f.balance(t, callerID); got.LessThan(decimal.RequireFromString("0.00499")) {
+		t.Errorf("balance after early delete = %s, want nearly 0.005 refunded", got)
+	}
 	if _, err := f.create(callerID, db.EnvRegularTesting, cpu(1)); err != nil {
-		t.Errorf("Create() error = %v, want spend before budget period ignored", err)
+		t.Errorf("Create() after refund error = %v", err)
 	}
 }
 

@@ -111,18 +111,19 @@ func TestCallerSpend(t *testing.T) {
 	}
 
 	e := newEnvironment(callerID)
-	e.HourlyRate = decimal.RequireFromString("1.5")
-	e.TTL = 2 * time.Hour
+	e.ReservedCost = decimal.RequireFromString("3")
 	createTestEnvironment(t, tx, e)
 
-	deleted := createTestEnvironment(t, tx, e)
-	if _, err := tx.Exec(ctx, `UPDATE environments SET status = 'DELETED', deleted_at = created_at + interval '30 minutes' WHERE id = $1`, deleted); err != nil {
-		t.Fatalf("mark deleted: %v", err)
+	refund := func(id uuid.UUID, amount string) {
+		t.Helper()
+		if _, err := tx.Exec(ctx, `UPDATE environments SET refunded_cost = $2 WHERE id = $1`, id, amount); err != nil {
+			t.Fatalf("set refund: %v", err)
+		}
 	}
+	refund(createTestEnvironment(t, tx, e), "2.25")
+	refund(createTestEnvironment(t, tx, e), "3")
 
-	forceStatus(t, tx, createTestEnvironment(t, tx, e), EnvFailed)
-
-	prodBug := e
+	prodBug := newEnvironment(callerID)
 	prodBug.Type = EnvProdBug
 	createTestEnvironment(t, tx, prodBug)
 
@@ -136,7 +137,7 @@ func TestCallerSpend(t *testing.T) {
 		t.Fatalf("CallerSpend() error = %v", err)
 	}
 	if want := decimal.RequireFromString("3.75"); !spend.Equal(want) {
-		t.Errorf("CallerSpend() = %s, want %s (3 for active, 0.75 for deleted)", spend, want)
+		t.Errorf("CallerSpend() = %s, want %s (3 still reserved, 0.75 kept after a partial refund)", spend, want)
 	}
 }
 
@@ -354,5 +355,97 @@ func TestEnvironmentByIdempotencyKey(t *testing.T) {
 
 	if _, err := CreateEnvironment(ctx, tx, e); pgCode(err) != "23505" {
 		t.Errorf("CreateEnvironment() duplicate key error = %v, want unique violation", err)
+	}
+}
+
+func TestStatusChangeRefundsUnusedBudget(t *testing.T) {
+	failed := func(ctx context.Context, q DBTX, id uuid.UUID) error {
+		return MarkEnvironmentFailed(ctx, q, id, "boom")
+	}
+
+	tests := []struct {
+		name   string
+		from   EnvStatus
+		mark   func(ctx context.Context, q DBTX, id uuid.UUID) error
+		age    time.Duration
+		refund string
+	}{
+		{name: "failed after 30m of a 2h ttl", from: EnvRunning, mark: failed, age: 30 * time.Minute, refund: "2.25"},
+		{name: "failed immediately", from: EnvProvisioning, mark: failed, refund: "3"},
+		{name: "deleted after 30m of a 2h ttl", from: EnvDeleting, mark: MarkEnvironmentDeleted, age: 30 * time.Minute, refund: "2.25"},
+		{name: "deleted after the ttl ran out", from: EnvDeleting, mark: MarkEnvironmentDeleted, age: 3 * time.Hour, refund: "0"},
+		{name: "deleting does not refund yet", from: EnvRunning, mark: MarkEnvironmentDeleting, age: 30 * time.Minute, refund: "0"},
+		{name: "running does not refund", from: EnvProvisioning, mark: MarkEnvironmentRunning, refund: "0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tx := testTx(t)
+			ctx := context.Background()
+			callerID := createTestCaller(t, tx, newCaller())
+			e := newEnvironment(callerID)
+			e.HourlyRate = decimal.RequireFromString("1.5")
+			e.TTL = 2 * time.Hour
+			e.ReservedCost = decimal.RequireFromString("3")
+			id := createTestEnvironment(t, tx, e)
+
+			balance := func() decimal.Decimal {
+				t.Helper()
+				c, err := LockCaller(ctx, tx, callerID)
+				if err != nil {
+					t.Fatalf("LockCaller() error = %v", err)
+				}
+				return c.CostBudget
+			}
+			if got, want := balance(), decimal.RequireFromString("9.345"); !got.Equal(want) {
+				t.Fatalf("balance after create = %s, want %s (12.345 - 3 reserved)", got, want)
+			}
+
+			if _, err := tx.Exec(ctx, `
+				UPDATE environments SET
+					created_at = created_at - make_interval(secs => $2),
+					expires_at = expires_at - make_interval(secs => $2)
+				WHERE id = $1`, id, tt.age.Seconds()); err != nil {
+				t.Fatalf("age env: %v", err)
+			}
+			forceStatus(t, tx, id, tt.from)
+
+			if err := tt.mark(ctx, tx, id); err != nil {
+				t.Fatalf("mark error = %v", err)
+			}
+
+			refund := decimal.RequireFromString(tt.refund)
+			if got, want := balance(), decimal.RequireFromString("9.345").Add(refund); !got.Equal(want) {
+				t.Errorf("balance = %s, want %s (refund %s)", got, want, refund)
+			}
+			var refunded decimal.Decimal
+			if err := tx.QueryRow(ctx, `SELECT refunded_cost FROM environments WHERE id = $1`, id).Scan(&refunded); err != nil {
+				t.Fatalf("read refunded_cost: %v", err)
+			}
+			if !refunded.Equal(refund) {
+				t.Errorf("refunded_cost = %s, want %s", refunded, refund)
+			}
+		})
+	}
+}
+
+func TestRejectedStatusChangeDoesNotRefund(t *testing.T) {
+	tx := testTx(t)
+	ctx := context.Background()
+	callerID := createTestCaller(t, tx, newCaller())
+	e := newEnvironment(callerID)
+	e.ReservedCost = decimal.RequireFromString("3")
+	id := createTestEnvironment(t, tx, e)
+	forceStatus(t, tx, id, EnvFailed)
+
+	if err := MarkEnvironmentFailed(ctx, tx, id, "again"); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("MarkEnvironmentFailed() error = %v, want ErrInvalidTransition", err)
+	}
+	c, err := LockCaller(ctx, tx, callerID)
+	if err != nil {
+		t.Fatalf("LockCaller() error = %v", err)
+	}
+	if want := decimal.RequireFromString("9.345"); !c.CostBudget.Equal(want) {
+		t.Errorf("balance = %s, want %s", c.CostBudget, want)
 	}
 }

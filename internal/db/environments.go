@@ -19,20 +19,21 @@ var (
 )
 
 type Environment struct {
-	ID              uuid.UUID
-	CreatedAt       time.Time
-	ExpiresAt       time.Time
-	Type            EnvType
-	Status          EnvStatus
-	DeletedAt       *time.Time
-	Provider        provider.Type
-	Endpoint        *string
-	Resources       provider.Resources
-	HourlyRate      decimal.Decimal
-	CallerID        uuid.UUID
-	FailureReason   *string
-	TemplateName    string
-	TemplateVersion string
+	ID              uuid.UUID          `json:"id"`
+	CreatedAt       time.Time          `json:"created_at"`
+	ExpiresAt       time.Time          `json:"expires_at"`
+	Type            EnvType            `json:"type"`
+	Status          EnvStatus          `json:"status"`
+	DeletedAt       *time.Time         `json:"-"`
+	Provider        provider.Type      `json:"provider"`
+	Endpoint        *string            `json:"endpoint"`
+	Resources       provider.Resources `json:"resources"`
+	HourlyRate      decimal.Decimal    `json:"hourly_rate"`
+	CallerID        uuid.UUID          `json:"-"`
+	FailureReason   *string            `json:"failure_reason,omitempty"`
+	TemplateName    string             `json:"template_name"`
+	TemplateVersion string             `json:"template_version"`
+	InstanceStatus  provider.Status    `json:"instance_status,omitempty"`
 }
 
 type NewEnvironment struct {
@@ -45,6 +46,7 @@ type NewEnvironment struct {
 	TemplateName    string
 	TemplateVersion string
 	IdempotencyKey  *string
+	ReservedCost    decimal.Decimal
 }
 
 const environmentColumns = `
@@ -64,20 +66,34 @@ func scanEnvironment(row pgx.Row) (Environment, error) {
 
 func CreateEnvironment(ctx context.Context, q DBTX, e NewEnvironment) (uuid.UUID, error) {
 	id := uuid.New()
-	_, err := q.Exec(ctx, `
+	tx, err := q.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("create environment: begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, `
 		INSERT INTO environments (
 			id, expires_at, type, provider,
 			cpu_cores, ram_gb, disk_gb, hourly_rate,
-			caller_id, template_name, template_version, idempotency_key
+			caller_id, template_name, template_version, idempotency_key, reserved_cost
 		)
-		VALUES ($1, now() + make_interval(secs => $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		VALUES ($1, now() + make_interval(secs => $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 		id, e.TTL.Seconds(), e.Type, e.Provider,
 		e.Resources.CPUCore, e.Resources.RAMGB, e.Resources.DiskGB, e.HourlyRate,
-		e.CallerID, e.TemplateName, e.TemplateVersion, e.IdempotencyKey,
+		e.CallerID, e.TemplateName, e.TemplateVersion, e.IdempotencyKey, e.ReservedCost,
 	)
-
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("create environment: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `UPDATE callers SET cost_budget = cost_budget - $2 WHERE id = $1`, e.CallerID, e.ReservedCost)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("create environment: reduce caller budget: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, fmt.Errorf("create environment: commit transaction: %w", err)
 	}
 
 	return id, nil
@@ -112,39 +128,50 @@ func EnvironmentByIdempotencyKey(ctx context.Context, q DBTX, callerID uuid.UUID
 }
 
 func MarkEnvironmentRunning(ctx context.Context, q DBTX, id uuid.UUID) error {
-	return setStatus(ctx, q, id, EnvRunning, nil, false, EnvProvisioning)
+	return setStatus(ctx, q, id, EnvRunning, nil, false, false, EnvProvisioning)
 }
 
 func MarkEnvironmentFailed(ctx context.Context, q DBTX, id uuid.UUID, reason string) error {
-	return setStatus(ctx, q, id, EnvFailed, &reason, true, EnvProvisioning, EnvRunning)
+	return setStatus(ctx, q, id, EnvFailed, &reason, true, true, EnvProvisioning, EnvRunning)
 }
 
 func MarkEnvironmentDeleting(ctx context.Context, q DBTX, id uuid.UUID) error {
-	return setStatus(ctx, q, id, EnvDeleting, nil, true, EnvProvisioning, EnvRunning)
+	return setStatus(ctx, q, id, EnvDeleting, nil, true, false, EnvProvisioning, EnvRunning)
 }
 
 func MarkEnvironmentDeleted(ctx context.Context, q DBTX, id uuid.UUID) error {
-	return setStatus(ctx, q, id, EnvDeleted, nil, false, EnvDeleting)
+	return setStatus(ctx, q, id, EnvDeleted, nil, false, true, EnvDeleting)
 }
 
-func setStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reason *string, release bool, from ...EnvStatus) error {
-	if !release {
-		return updateStatus(ctx, q, id, to, reason, false, from)
+func setStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reason *string, release, refund bool, from ...EnvStatus) error {
+	if !release && !refund {
+		return updateStatus(ctx, q, id, to, reason, false, false, from)
 	}
 
 	return pgx.BeginFunc(ctx, q, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `
-			SELECT 1 FROM capacity_pools
-			WHERE provider = (SELECT provider FROM environments WHERE id = $1)
-			FOR UPDATE`, id); err != nil {
-			return fmt.Errorf("set environment %s to %s: lock capacity pool: %w", id, to, err)
+		if refund {
+			if _, err := tx.Exec(ctx, `
+				SELECT 1 FROM callers
+				WHERE id = (SELECT caller_id FROM environments WHERE id = $1)
+				FOR UPDATE`, id); err != nil {
+				return fmt.Errorf("set environment %s to %s: lock caller: %w", id, to, err)
+			}
 		}
 
-		return updateStatus(ctx, tx, id, to, reason, true, from)
+		if release {
+			if _, err := tx.Exec(ctx, `
+				SELECT 1 FROM capacity_pools
+				WHERE provider = (SELECT provider FROM environments WHERE id = $1)
+				FOR UPDATE`, id); err != nil {
+				return fmt.Errorf("set environment %s to %s: lock capacity pool: %w", id, to, err)
+			}
+		}
+
+		return updateStatus(ctx, tx, id, to, reason, release, refund, from)
 	})
 }
 
-func updateStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reason *string, release bool, from []EnvStatus) error {
+func updateStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reason *string, release, refund bool, from []EnvStatus) error {
 	allowed := make([]string, len(from))
 	for i, s := range from {
 		allowed[i] = string(s)
@@ -156,9 +183,16 @@ func updateStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reaso
 			UPDATE environments SET
 				status         = $2::env_status,
 				failure_reason = COALESCE($3, failure_reason),
-				deleted_at     = CASE WHEN $2::env_status = 'DELETED' THEN now() ELSE deleted_at END
+				deleted_at     = CASE WHEN $2::env_status = 'DELETED' THEN now() ELSE deleted_at END,
+				refunded_cost  = CASE WHEN $6 THEN LEAST(reserved_cost, GREATEST(0, reserved_cost
+					- hourly_rate * GREATEST(0, extract(epoch FROM LEAST(now(), expires_at) - created_at)) / 3600))
+					ELSE refunded_cost END
 			WHERE id = $1 AND status::text = ANY($4)
-			RETURNING provider, cpu_cores, ram_gb, disk_gb
+			RETURNING provider, cpu_cores, ram_gb, disk_gb, caller_id, refunded_cost
+		), refunded AS (
+			UPDATE callers c SET cost_budget = c.cost_budget + env.refunded_cost
+			FROM env
+			WHERE $6 AND c.id = env.caller_id
 		), released AS (
 			UPDATE capacity_pools p SET
 				available_cpu_cores = LEAST(p.default_cpu_cores, p.available_cpu_cores + env.cpu_cores),
@@ -168,7 +202,7 @@ func updateStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reaso
 			WHERE $5 AND p.provider = env.provider
 		)
 		SELECT count(*) FROM env`,
-		id, to, reason, allowed, release,
+		id, to, reason, allowed, release, refund,
 	).Scan(&updated)
 
 	if err != nil {
@@ -206,6 +240,14 @@ func ListStuckProvisioning(ctx context.Context, q DBTX, olderThan time.Duration)
 
 func ListDeletingEnvironments(ctx context.Context, q DBTX) ([]Environment, error) {
 	return listEnvironments(ctx, q, `WHERE status = 'DELETING' ORDER BY created_at`)
+}
+
+func ListCallerEnvironments(ctx context.Context, q DBTX, callerID uuid.UUID) ([]Environment, error) {
+	return listEnvironments(ctx, q, `WHERE caller_id = $1 ORDER BY created_at DESC`, callerID)
+}
+
+func ListActiveEnvironments(ctx context.Context, q DBTX) ([]Environment, error) {
+	return listEnvironments(ctx, q, `WHERE status IN ('PROVISIONING', 'RUNNING')`)
 }
 
 func listEnvironments(ctx context.Context, q DBTX, where string, args ...any) ([]Environment, error) {
@@ -255,11 +297,9 @@ func CallerUsage(ctx context.Context, q DBTX, callerID uuid.UUID) (provider.Reso
 func CallerSpend(ctx context.Context, q DBTX, callerID uuid.UUID, since time.Time) (decimal.Decimal, error) {
 	var spend decimal.Decimal
 	err := q.QueryRow(ctx, `
-		SELECT COALESCE(sum(
-			hourly_rate * extract(epoch FROM LEAST(COALESCE(deleted_at, expires_at), expires_at) - created_at) / 3600
-		), 0)
+		SELECT COALESCE(sum(reserved_cost - refunded_cost), 0)
 		FROM environments
-		WHERE caller_id = $1 AND type <> 'PROD_BUG' AND status <> 'FAILED' AND created_at >= $2`,
+		WHERE caller_id = $1 AND created_at >= $2`,
 		callerID, since,
 	).Scan(&spend)
 
