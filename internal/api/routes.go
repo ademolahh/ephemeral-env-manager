@@ -15,6 +15,7 @@ func Routes(h *Handler) http.Handler {
 	mux.HandleFunc("GET /callers/{id}/budget", h.GetBudget)
 	mux.Handle("PUT /callers/{id}/budget", requireAdmin(http.HandlerFunc(h.SetBudget)))
 	mux.HandleFunc("POST /envs", h.CreateEnv)
+	mux.HandleFunc("GET /capacity", h.GetCapacity)
 	mux.HandleFunc("GET /envs", h.ListEnvs)
 	mux.HandleFunc("GET /envs/{id}", h.GetEnv)
 	mux.HandleFunc("DELETE /envs/{id}", h.DeleteEnv)

@@ -81,3 +81,31 @@ func ReserveCapacity(ctx context.Context, q DBTX, p provider.Type, r provider.Re
 	}
 	return nil
 }
+
+type ProviderPool struct {
+	Provider provider.Type
+	CapacityPool
+}
+
+func ListCapacityPools(ctx context.Context, q DBTX) ([]ProviderPool, error) {
+	rows, err := q.Query(ctx, `
+		SELECT provider, default_cpu_cores, default_ram_gb, default_disk_gb,
+			available_cpu_cores, available_ram_gb, available_disk_gb
+		FROM capacity_pools ORDER BY provider`)
+	if err != nil {
+		return nil, fmt.Errorf("list capacity pools: %w", err)
+	}
+
+	pools, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (ProviderPool, error) {
+		var p ProviderPool
+		err := row.Scan(&p.Provider,
+			&p.Default.CPUCore, &p.Default.RAMGB, &p.Default.DiskGB,
+			&p.Available.CPUCore, &p.Available.RAMGB, &p.Available.DiskGB)
+		return p, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list capacity pools: %w", err)
+	}
+
+	return pools, nil
+}

@@ -1,7 +1,9 @@
 const keyStorage = "eem_api_key";
+const pageSize = 12;
 const $ = (id) => document.getElementById(id);
 let apiKey = sessionStorage.getItem(keyStorage) || "";
 let pendingDelete = null;
+let currentPage = 1;
 
 async function requestJSON(path, method = "GET") {
   const response = await fetch(path, {
@@ -21,8 +23,14 @@ async function requestJSON(path, method = "GET") {
   return response.json();
 }
 
-const listEnvironments = () => requestJSON("/envs");
+const listEnvironments = (page = 1) => {
+  const params = new URLSearchParams({ page: String(page), limit: String(pageSize) });
+  const status = $("status-filter").value;
+  if (status !== "all") params.set("status", status);
+  return requestJSON(`/envs?${params}`);
+};
 const getBudget = () => requestJSON("/callers/me/budget");
+const getCapacity = () => requestJSON("/capacity");
 const deleteEnvironment = (id) =>
   requestJSON(`/envs/${encodeURIComponent(id)}`, "DELETE");
 
@@ -30,17 +38,22 @@ function showLogin(message = "") {
   $("login-view").hidden = false;
   $("dashboard-view").hidden = true;
   $("account").hidden = true;
+  $("caller-id").textContent = "—";
+  $("status-filter").value = "all";
+  currentPage = 1;
+  $("pagination").hidden = true;
   $("login-error").textContent = message;
   $("login-error").hidden = !message;
   $("budget-given").textContent = "—";
   $("budget-used").textContent = "—";
   $("budget-remaining").textContent = "—";
+  $("prod-bug-cost-used").textContent = "";
   $("budget-expiry").textContent = "Loading budget…";
-  $("budget-resources-used").textContent = "";
-  $("budget-resources-assigned").textContent = "";
   $("budget-error").hidden = true;
   $("budget-fill").style.width = "0%";
   $("budget-fill").parentElement.setAttribute("aria-valuenow", "0");
+  $("capacity-pools").replaceChildren();
+  $("capacity-error").hidden = true;
 }
 
 function showDashboard() {
@@ -75,16 +88,15 @@ function formatUSD(value) {
   return `$${whole}.${fraction}`;
 }
 
-function formatResourceAmount(value, unit) {
-  return `${new Intl.NumberFormat().format(value ?? 0)} ${unit}`;
-}
-
 function renderBudget(budget) {
   const given = Number(budget.cost_budget);
   const used = Number(budget.cost_used);
+  $("caller-id").textContent = budget.caller_id || "—";
   $("budget-given").textContent = formatUSD(budget.cost_budget);
   $("budget-used").textContent = formatUSD(budget.cost_used);
   $("budget-remaining").textContent = formatUSD(budget.cost_remaining);
+  $("prod-bug-cost-used").textContent =
+    `PROD_BUG cost (outside budget): ${formatUSD(budget.prod_bug_cost_used)}`;
   $("budget-expiry").textContent =
     `Expires ${readableDate(budget.budget_expires_at)}`;
   const percent =
@@ -98,13 +110,87 @@ function renderBudget(budget) {
     "aria-valuenow",
     String(Math.round(percent)),
   );
-  const quota = budget.quota || {};
-  const resources = budget.resources_used || {};
-  $("budget-resources-used").textContent =
-    `Resources used: ${formatResourceAmount(resources.cpu_core, "CPU")} · ${formatResourceAmount(resources.ram_gb, "GB RAM")} · ${formatResourceAmount(resources.disk_gb, "GB disk")}`;
-  $("budget-resources-assigned").textContent =
-    `Resources assigned: ${formatResourceAmount(quota.cpu_core, "CPU")} · ${formatResourceAmount(quota.ram_gb, "GB RAM")} · ${formatResourceAmount(quota.disk_gb, "GB disk")}`;
   $("budget-error").hidden = true;
+}
+
+const capacityResources = [
+  ["cpu_core", "CPU", ""],
+  ["ram_gb", "RAM", " GB"],
+  ["disk_gb", "Disk", " GB"],
+];
+
+function capacityRow(pool, key, label, unit) {
+  const total = pool.total[key] || 0;
+  const used = pool.used[key] || 0;
+  const limit = pool.normal_limit[key] || 0;
+  const pct = (n) => (total > 0 ? Math.min(100, Math.max(0, (n / total) * 100)) : 0);
+
+  const row = document.createElement("div");
+  row.className = "capacity-row";
+  const name = document.createElement("span");
+  name.className = "capacity-label";
+  name.textContent = label;
+
+  const track = document.createElement("div");
+  track.className = "capacity-track";
+  track.setAttribute("role", "progressbar");
+  track.setAttribute("aria-label", `${pool.provider} ${label} used`);
+  track.setAttribute("aria-valuemin", "0");
+  track.setAttribute("aria-valuemax", String(total));
+  track.setAttribute("aria-valuenow", String(used));
+  const reserved = document.createElement("span");
+  reserved.className = "capacity-reserved";
+  reserved.style.left = `${pct(limit)}%`;
+  reserved.style.width = `${100 - pct(limit)}%`;
+  const fill = document.createElement("span");
+  fill.className = used > limit ? "capacity-fill over" : "capacity-fill";
+  fill.style.width = `${pct(used)}%`;
+  const marker = document.createElement("span");
+  marker.className = "capacity-marker";
+  marker.style.left = `${pct(limit)}%`;
+  marker.title = `Normal limit: ${limit}${unit}`;
+  track.append(reserved, fill, marker);
+
+  const detail = document.createElement("span");
+  detail.className = "capacity-detail";
+  detail.textContent =
+    `${used} / ${total}${unit} used · ${pool.normal_free[key]}${unit} free for normal · ${pool.prod_bug_free[key]}${unit} for PROD_BUG`;
+
+  row.append(name, track, detail);
+  return row;
+}
+
+function renderCapacity(capacity) {
+  const container = $("capacity-pools");
+  container.replaceChildren();
+  for (const pool of capacity.pools) {
+    const card = document.createElement("div");
+    card.className = "capacity-pool";
+    const title = document.createElement("h3");
+    title.textContent = pool.provider;
+    card.append(title);
+    for (const [key, label, unit] of capacityResources) {
+      card.append(capacityRow(pool, key, label, unit));
+    }
+    container.append(card);
+  }
+  if (capacity.pools.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "budget-resources";
+    empty.textContent = "No provider capacity has been configured.";
+    container.append(empty);
+  }
+  $("capacity-error").hidden = true;
+}
+
+async function loadCapacity() {
+  try {
+    renderCapacity(await getCapacity());
+  } catch (error) {
+    if (error.status === 401) return;
+    $("capacity-error").textContent = `Could not load capacity: ${error.message}`;
+    $("capacity-error").hidden = false;
+  }
 }
 
 async function loadBudget() {
@@ -157,7 +243,7 @@ async function confirmDelete() {
   try {
     await deleteEnvironment(env.id);
     $("delete-dialog").close();
-    await loadEnvironments();
+    await loadEnvironments(currentPage);
   } catch (error) {
     if (error.status === 401) {
       apiKey = "";
@@ -176,17 +262,21 @@ async function confirmDelete() {
   }
 }
 
-function renderEnvironments(envs) {
-  $("total-count").textContent = envs.length;
-  $("running-count").textContent = envs.filter(
-    (e) => e.status === "RUNNING",
-  ).length;
-  $("provisioning-count").textContent = envs.filter(
-    (e) => e.status === "PROVISIONING",
-  ).length;
+function renderEnvironments(page) {
+  currentPage = page.page;
+  const filter = $("status-filter").value;
+  const filteredTotal = filter === "all" ? page.total : (page.counts[filter] ?? 0);
+  const totalPages = Math.ceil(filteredTotal / page.limit);
+  $("pagination").hidden = filteredTotal === 0;
+  $("page-number").textContent = `Page ${page.page} of ${totalPages}`;
+  $("previous-page").disabled = page.page <= 1;
+  $("next-page").disabled = !page.next_page;
+  $("total-count").textContent = page.total;
+  $("running-count").textContent = page.counts.RUNNING ?? 0;
+  $("provisioning-count").textContent = page.counts.PROVISIONING ?? 0;
   const grid = $("environment-grid");
   grid.replaceChildren();
-  for (const env of envs) {
+  for (const env of page.environments) {
     const card = document.createElement("article");
     card.className = "env-card";
     const header = document.createElement("div");
@@ -240,22 +330,31 @@ function renderEnvironments(envs) {
     if (actions.childElementCount) card.append(actions);
     grid.append(card);
   }
-  grid.hidden = envs.length === 0;
-  $("list-status").hidden = envs.length > 0;
+  grid.hidden = page.environments.length === 0;
+  $("list-status").hidden = page.environments.length > 0;
   $("list-status").className = "list-status";
-  $("list-status").textContent = envs.length
-    ? ""
-    : "No environments yet. Environments created with this account will appear here.";
+  $("list-status").textContent = page.total === 0
+    ? "No environments yet. Environments created with this account will appear here."
+    : page.environments.length === 0
+      ? `No ${$("status-filter").selectedOptions[0].textContent.toLowerCase()} environments.`
+      : "";
 }
 
-async function loadEnvironments() {
+async function loadEnvironments(requestedPage = 1) {
   $("refresh").disabled = true;
   $("list-status").hidden = false;
   $("list-status").className = "list-status";
   $("list-status").textContent = "Loading environments…";
+  $("pagination").hidden = true;
   try {
-    renderEnvironments(await listEnvironments());
-    await loadBudget();
+    let page = await listEnvironments(requestedPage);
+    const filter = $("status-filter").value;
+    const filteredTotal = filter === "all" ? page.total : (page.counts[filter] ?? 0);
+    if (requestedPage > 1 && filteredTotal > 0 && page.environments.length === 0) {
+      page = await listEnvironments(Math.ceil(filteredTotal / page.limit));
+    }
+    renderEnvironments(page);
+    await Promise.all([loadBudget(), loadCapacity()]);
   } catch (error) {
     if (error.status === 401) {
       sessionStorage.removeItem(keyStorage);
@@ -280,12 +379,12 @@ $("key-form").addEventListener("submit", async (event) => {
   button.disabled = true;
   apiKey = value;
   try {
-    const envs = await listEnvironments();
+    const page = await listEnvironments();
     sessionStorage.setItem(keyStorage, apiKey);
     $("api-key").value = "";
     showDashboard();
-    renderEnvironments(envs);
-    await loadBudget();
+    renderEnvironments(page);
+    await Promise.all([loadBudget(), loadCapacity()]);
   } catch (error) {
     apiKey = "";
     showLogin(
@@ -308,7 +407,10 @@ $("toggle-key").addEventListener("click", () => {
   );
 });
 
-$("refresh").addEventListener("click", loadEnvironments);
+$("refresh").addEventListener("click", () => loadEnvironments(currentPage));
+$("status-filter").addEventListener("change", () => loadEnvironments());
+$("previous-page").addEventListener("click", () => loadEnvironments(currentPage - 1));
+$("next-page").addEventListener("click", () => loadEnvironments(currentPage + 1));
 $("delete-cancel").addEventListener("click", () => $("delete-dialog").close());
 $("delete-confirm").addEventListener("click", confirmDelete);
 $("delete-dialog").addEventListener("close", () => { pendingDelete = null; });

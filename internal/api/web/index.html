@@ -30,7 +30,7 @@
       <main class="main">
         <header class="topbar">
           <span class="breadcrumb">Workspace <span>/</span> Environments</span
-          ><span id="account" class="account" hidden>API key access</span>
+          ><span id="account" class="account" hidden>Caller ID <code id="caller-id">—</code></span>
         </header>
 
         <section id="login-view" class="login-view">
@@ -124,7 +124,7 @@
             <div class="budget-heading">
               <div>
                 <h2 id="budget-heading">Cost budget (USD)</h2>
-                <p>Active environments count their planned lifetime cost.</p>
+                <p>Active environments count their planned lifetime cost. PROD_BUG costs are tracked separately.</p>
               </div>
               <span id="budget-expiry">Loading budget…</span>
             </div>
@@ -145,9 +145,25 @@
             >
               <span id="budget-fill"></span>
             </div>
-            <p id="budget-resources-used" class="budget-resources"></p>
-            <p id="budget-resources-assigned" class="budget-resources"></p>
+            <p id="prod-bug-cost-used" class="budget-resources"></p>
             <p id="budget-error" class="budget-error" role="alert" hidden></p>
+          </section>
+          <section class="capacity-panel" aria-labelledby="capacity-heading">
+            <div class="budget-heading">
+              <div>
+                <h2 id="capacity-heading">Provider capacity</h2>
+                <p>
+                  Shared by every caller. Normal environments can use up to 90% of
+                  each pool; the last 10% is held back for PROD_BUG, which can use all of it.
+                </p>
+              </div>
+              <span class="capacity-legend">
+                <i class="legend-used"></i>Used
+                <i class="legend-reserved"></i>PROD_BUG only
+              </span>
+            </div>
+            <div id="capacity-pools" class="capacity-pools"></div>
+            <p id="capacity-error" class="budget-error" role="alert" hidden></p>
           </section>
           <div class="list-panel">
             <div class="panel-head">
@@ -155,18 +171,38 @@
                 <h2>Your environments</h2>
                 <p>Track the lifecycle of your temporary workspaces.</p>
               </div>
-              <button
-                id="refresh"
-                class="refresh-button"
-                aria-label="Refresh environments"
-              >
-                ↻ <span>Refresh</span>
-              </button>
+              <div class="panel-controls">
+                <label for="status-filter">Status</label>
+                <select id="status-filter">
+                  <option value="all">All statuses</option>
+                  <option value="PROVISIONING">Provisioning</option>
+                  <option value="RUNNING">Running</option>
+                  <option value="DELETING">Deleting</option>
+                  <option value="DELETED">Deleted</option>
+                  <option value="FAILED">Failed</option>
+                </select>
+                <button
+                  id="refresh"
+                  class="refresh-button"
+                  aria-label="Refresh environments"
+                >
+                  ↻ <span>Refresh</span>
+                </button>
+              </div>
             </div>
             <div id="list-status" class="list-status" role="status">
               Loading environments…
             </div>
             <div class="environment-grid" id="environment-grid" hidden></div>
+            <div id="pagination" class="pagination" hidden>
+              <button id="previous-page" class="refresh-button" type="button">
+                Previous
+              </button>
+              <span id="page-number" aria-live="polite"></span>
+              <button id="next-page" class="refresh-button" type="button">
+                Next
+              </button>
+            </div>
           </div>
         </section>
       </main>

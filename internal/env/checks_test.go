@@ -500,3 +500,20 @@ func TestLowerPriority(t *testing.T) {
 		}
 	}
 }
+
+func TestCapacity(t *testing.T) {
+	got := Capacity(db.CapacityPool{
+		Default:   provider.Resources{CPUCore: 10, RAMGB: 100, DiskGB: 1000},
+		Available: provider.Resources{CPUCore: 5, RAMGB: 4, DiskGB: 1000},
+	})
+	want := PoolCapacity{
+		Total:       provider.Resources{CPUCore: 10, RAMGB: 100, DiskGB: 1000},
+		Used:        provider.Resources{CPUCore: 5, RAMGB: 96, DiskGB: 0},
+		NormalLimit: provider.Resources{CPUCore: 9, RAMGB: 90, DiskGB: 900},
+		NormalFree:  provider.Resources{CPUCore: 4, RAMGB: 0, DiskGB: 900},
+		ProdBugFree: provider.Resources{CPUCore: 5, RAMGB: 4, DiskGB: 1000},
+	}
+	if got != want {
+		t.Errorf("Capacity() = %+v, want %+v", got, want)
+	}
+}

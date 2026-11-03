@@ -337,11 +337,7 @@ func makeRoom(ctx context.Context, tx pgx.Tx, pt provider.Type, t db.EnvType, ne
 
 	limit := pool.Default
 	if t != db.EnvProdBug {
-		limit = provider.Resources{
-			CPUCore: pool.Default.CPUCore * 9 / 10,
-			RAMGB:   pool.Default.RAMGB * 9 / 10,
-			DiskGB:  pool.Default.DiskGB * 9 / 10,
-		}
+		limit = normalLimit(pool.Default)
 	}
 
 	free := sub(limit, sub(pool.Default, pool.Available))
@@ -389,6 +385,38 @@ func makeRoom(ctx context.Context, tx pgx.Tx, pt provider.Type, t db.EnvType, ne
 	}
 
 	return victims, nil
+}
+
+type PoolCapacity struct {
+	Total       provider.Resources
+	Used        provider.Resources
+	NormalLimit provider.Resources
+	NormalFree  provider.Resources
+	ProdBugFree provider.Resources
+}
+
+func Capacity(pool db.CapacityPool) PoolCapacity {
+	used := sub(pool.Default, pool.Available)
+	limit := normalLimit(pool.Default)
+	return PoolCapacity{
+		Total:       pool.Default,
+		Used:        used,
+		NormalLimit: limit,
+		NormalFree:  atLeastZero(sub(limit, used)),
+		ProdBugFree: atLeastZero(pool.Available),
+	}
+}
+
+func normalLimit(total provider.Resources) provider.Resources {
+	return provider.Resources{
+		CPUCore: total.CPUCore * 9 / 10,
+		RAMGB:   total.RAMGB * 9 / 10,
+		DiskGB:  total.DiskGB * 9 / 10,
+	}
+}
+
+func atLeastZero(r provider.Resources) provider.Resources {
+	return provider.Resources{CPUCore: max(0, r.CPUCore), RAMGB: max(0, r.RAMGB), DiskGB: max(0, r.DiskGB)}
 }
 
 func priority(t db.EnvType) int {
