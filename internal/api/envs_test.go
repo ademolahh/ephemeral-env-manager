@@ -63,7 +63,7 @@ func newServer(t *testing.T) server {
 	}
 	fake := &fakeProvider{}
 	m := env.NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake})
-	return server{tx: tx, m: m, fake: fake, handler: Routes(NewHandler(tx, m))}
+	return server{tx: tx, m: m, fake: fake, handler: Routes(NewHandler(tx, m, testAdminSecret))}
 }
 
 func (s server) apiKey(t *testing.T, permitted db.EnvType, quota provider.Resources) string {

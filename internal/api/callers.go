@@ -95,16 +95,23 @@ type budgetResponse struct {
 }
 
 func (h *Handler) GetBudget(w http.ResponseWriter, r *http.Request) {
+	_, admin := adminFrom(r.Context())
 	caller := callerFrom(r.Context())
 	id := caller.ID
-	if r.PathValue("id") != "me" {
+
+	if r.PathValue("id") == "me" {
+		if admin {
+			writeError(w, http.StatusBadRequest, "admins have no budget; use a caller id")
+			return
+		}
+	} else {
 		var err error
 		id, err = uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid caller id")
 			return
 		}
-		if id != caller.ID && caller.Role != db.RoleAdmin {
+		if id != caller.ID && !admin {
 			writeError(w, http.StatusNotFound, "caller not found")
 			return
 		}

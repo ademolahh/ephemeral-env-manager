@@ -97,7 +97,13 @@ func (h *Handler) GetEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	e, status, err := h.envs.Get(r.Context(), callerFrom(r.Context()), id)
+	var e db.Environment
+	var status provider.Status
+	if _, admin := adminFrom(r.Context()); admin {
+		e, status, err = h.envs.GetAny(r.Context(), id)
+	} else {
+		e, status, err = h.envs.Get(r.Context(), callerFrom(r.Context()), id)
+	}
 	if err != nil {
 		writeServiceError(w, "get environment", err)
 		return
@@ -192,7 +198,12 @@ func (h *Handler) DeleteEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	e, err := h.envs.Delete(r.Context(), callerFrom(r.Context()), id)
+	var e db.Environment
+	if _, admin := adminFrom(r.Context()); admin {
+		e, err = h.envs.DeleteAny(r.Context(), id)
+	} else {
+		e, err = h.envs.Delete(r.Context(), callerFrom(r.Context()), id)
+	}
 	if err != nil {
 		writeServiceError(w, "delete environment", err)
 		return

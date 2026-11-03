@@ -8,6 +8,7 @@ services:
       - "8080:8080"
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:

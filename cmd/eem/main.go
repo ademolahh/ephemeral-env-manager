@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/api"
+	"github.com/ademolahh/ephemeral-env-manager/internal/auth"
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/env"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
@@ -24,6 +25,11 @@ func main() {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		log.Fatal("DATABASE_URL is required")
+	}
+
+	adminSecret := []byte(os.Getenv("ADMIN_JWT_SECRET"))
+	if len(adminSecret) < auth.MinAdminSecretSize {
+		log.Fatalf("ADMIN_JWT_SECRET must be at least %d bytes", auth.MinAdminSecretSize)
 	}
 
 	pool, err := db.New(ctx, databaseURL)
@@ -45,7 +51,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":8080",
-		Handler:           api.Routes(api.NewHandler(pool, envs)),
+		Handler:           api.Routes(api.NewHandler(pool, envs, adminSecret)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

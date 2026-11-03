@@ -13,28 +13,23 @@ func Routes(h *Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /callers/{id}/budget", h.GetBudget)
 	mux.Handle("PUT /callers/{id}/budget", requireAdmin(http.HandlerFunc(h.SetBudget)))
-	mux.HandleFunc("POST /envs", h.CreateEnv)
+	mux.Handle("POST /envs", requireCaller(http.HandlerFunc(h.CreateEnv)))
 	mux.HandleFunc("GET /capacity", h.GetCapacity)
 	mux.Handle("PUT /capacity/{provider}", requireAdmin(http.HandlerFunc(h.SetCapacity)))
 	mux.Handle("PUT /prices/{provider}", requireAdmin(http.HandlerFunc(h.SetPrices)))
-	mux.HandleFunc("GET /envs", h.ListEnvs)
+	mux.Handle("GET /envs", requireCaller(http.HandlerFunc(h.ListEnvs)))
 	mux.HandleFunc("GET /envs/{id}", h.GetEnv)
 	mux.HandleFunc("DELETE /envs/{id}", h.DeleteEnv)
 
 	assets, _ := fs.Sub(webFiles, "web")
 	frontend := http.FileServer(http.FS(assets))
-	secured := h.authenticate(mux)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/app.js" || r.URL.Path == "/styles.css") {
-			frontend.ServeHTTP(w, r)
-			return
-		}
 
-		if r.Method == http.MethodPost && r.URL.Path == "/callers" {
-			h.CreateCaller(w, r)
-			return
-		}
-
-		secured.ServeHTTP(w, r)
-	})
+	root := http.NewServeMux()
+	root.Handle("GET /{$}", frontend)
+	root.Handle("GET /app.js", frontend)
+	root.Handle("GET /styles.css", frontend)
+	root.HandleFunc("POST /callers", h.CreateCaller)
+	root.HandleFunc("POST /admin/login", h.AdminLogin)
+	root.Handle("/", h.authenticate(mux))
+	return root
 }

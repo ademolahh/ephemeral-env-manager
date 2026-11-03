@@ -100,6 +100,19 @@ func (m *Manager) Get(ctx context.Context, caller db.AuthenticatedCaller, id uui
 		return db.Environment{}, "", fmt.Errorf("get environment: %w", err)
 	}
 
+	return m.withStatus(ctx, e)
+}
+
+func (m *Manager) GetAny(ctx context.Context, id uuid.UUID) (db.Environment, provider.Status, error) {
+	e, err := db.GetEnvironment(ctx, m.db, id)
+	if err != nil {
+		return db.Environment{}, "", fmt.Errorf("get environment: %w", err)
+	}
+
+	return m.withStatus(ctx, e)
+}
+
+func (m *Manager) withStatus(ctx context.Context, e db.Environment) (db.Environment, provider.Status, error) {
 	if e.Status != db.EnvProvisioning && e.Status != db.EnvRunning {
 		return e, "", nil
 	}
@@ -130,13 +143,22 @@ func (m *Manager) Delete(ctx context.Context, caller db.AuthenticatedCaller, id 
 	return m.Remove(ctx, e)
 }
 
+func (m *Manager) DeleteAny(ctx context.Context, id uuid.UUID) (db.Environment, error) {
+	e, err := db.GetEnvironment(ctx, m.db, id)
+	if err != nil {
+		return db.Environment{}, fmt.Errorf("delete environment: %w", err)
+	}
+
+	return m.Remove(ctx, e)
+}
+
 func (m *Manager) owned(ctx context.Context, caller db.AuthenticatedCaller, id uuid.UUID) (db.Environment, error) {
 	e, err := db.GetEnvironment(ctx, m.db, id)
 	if err != nil {
 		return db.Environment{}, err
 	}
 
-	if e.CallerID != caller.ID && caller.Role != db.RoleAdmin {
+	if e.CallerID != caller.ID {
 		return db.Environment{}, fmt.Errorf("environment %s: %w", id, db.ErrEnvNotFound)
 	}
 

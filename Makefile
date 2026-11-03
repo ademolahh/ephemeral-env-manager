@@ -8,7 +8,7 @@ TEST_DOCKER ?= 1
 
 export TEST_DATABASE_URL TEST_DOCKER
 
-.PHONY: migrate-up migrate-down migrate-new api-key seed-docker test test-db
+.PHONY: migrate-up migrate-down migrate-new api-key admin seed-docker test test-db
 
 migrate-up:
 	migrate -path $(MIGRATIONS_DIR) -database "$(DATABASE_URL)" up
@@ -21,6 +21,10 @@ migrate-new:
 
 api-key:
 	@DATABASE_URL="$(DATABASE_URL)" go run ./scripts/generate_api_key.go $(ARGS)
+
+admin:
+	@printf "Password: "; stty -echo; read -r pw; stty echo; echo; \
+		printf '%s\n' "$$pw" | DATABASE_URL="$(DATABASE_URL)" go run ./scripts/create_admin $(ARGS)
 
 seed-docker:
 	@DATABASE_URL="$(DATABASE_URL)" go run ./scripts/seed_docker $(ARGS)

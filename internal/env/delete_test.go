@@ -111,17 +111,20 @@ func TestDelete(t *testing.T) {
 	}
 }
 
-func TestDeleteByAdmin(t *testing.T) {
+func TestDeleteAny(t *testing.T) {
 	tx, callerID := setup(t)
 	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: &fakeProvider{}})
 	e := createRunning(t, m, tx, callerID)
 
-	if _, err := m.Delete(context.Background(), otherCaller(t, tx, db.RoleAdmin), e.ID); err != nil {
-		t.Fatalf("Delete() by admin error = %v", err)
+	if _, err := m.DeleteAny(context.Background(), e.ID); err != nil {
+		t.Fatalf("DeleteAny() error = %v", err)
 	}
 	m.Wait()
 	if got := status(t, tx, e.ID).Status; got != db.EnvDeleted {
 		t.Errorf("status = %s, want %s", got, db.EnvDeleted)
+	}
+	if _, err := m.DeleteAny(context.Background(), uuid.New()); !errors.Is(err, db.ErrEnvNotFound) {
+		t.Errorf("DeleteAny() unknown id error = %v, want ErrEnvNotFound", err)
 	}
 }
 

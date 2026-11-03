@@ -146,7 +146,7 @@ func TestCreateAPIKeyErrors(t *testing.T) {
 func TestCallerByAPIKey(t *testing.T) {
 	tx := testTx(t)
 	c := newCaller()
-	c.Role = RoleAdmin
+	c.Role = RoleAgent
 	c.PermittedEnv = EnvProdBug
 	callerID := createTestCaller(t, tx, c)
 	hash := []byte("secret-hash")
@@ -156,7 +156,7 @@ func TestCallerByAPIKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallerByAPIKey() error = %v", err)
 	}
-	want := AuthenticatedCaller{ID: callerID, Role: RoleAdmin, PermittedEnv: EnvProdBug}
+	want := AuthenticatedCaller{ID: callerID, Role: RoleAgent, PermittedEnv: EnvProdBug}
 	if got != want {
 		t.Errorf("CallerByAPIKey() = %+v, want %+v", got, want)
 	}

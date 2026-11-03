@@ -6,10 +6,11 @@ import (
 )
 
 type Handler struct {
-	db   db.DBTX
-	envs *env.Manager
+	db          db.DBTX
+	envs        *env.Manager
+	adminSecret []byte
 }
 
-func NewHandler(q db.DBTX, envs *env.Manager) *Handler {
-	return &Handler{db: q, envs: envs}
+func NewHandler(q db.DBTX, envs *env.Manager, adminSecret []byte) *Handler {
+	return &Handler{db: q, envs: envs, adminSecret: adminSecret}
 }

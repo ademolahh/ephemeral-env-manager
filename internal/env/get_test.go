@@ -34,16 +34,33 @@ func TestGetAccess(t *testing.T) {
 	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: &fakeProvider{status: provider.StatusRunning}})
 	e := createRunning(t, m, tx, callerID)
 
-	if _, _, err := m.Get(context.Background(), otherCaller(t, tx, db.RoleAdmin), e.ID); err != nil {
-		t.Errorf("Get() by admin error = %v", err)
-	}
 	for _, role := range []db.Role{db.RoleUser, db.RoleAgent} {
 		if _, _, err := m.Get(context.Background(), otherCaller(t, tx, role), e.ID); !errors.Is(err, db.ErrEnvNotFound) {
 			t.Errorf("Get() by other %s error = %v, want ErrEnvNotFound", role, err)
 		}
 	}
+	if _, _, err := m.Get(context.Background(), db.AuthenticatedCaller{}, e.ID); !errors.Is(err, db.ErrEnvNotFound) {
+		t.Errorf("Get() by zero caller error = %v, want ErrEnvNotFound", err)
+	}
 	if _, _, err := m.Get(context.Background(), owner(callerID), uuid.New()); !errors.Is(err, db.ErrEnvNotFound) {
 		t.Errorf("Get() unknown id error = %v, want ErrEnvNotFound", err)
+	}
+}
+
+func TestGetAny(t *testing.T) {
+	tx, callerID := setup(t)
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: &fakeProvider{status: provider.StatusRunning}})
+	e := createRunning(t, m, tx, callerID)
+
+	got, status, err := m.GetAny(context.Background(), e.ID)
+	if err != nil {
+		t.Fatalf("GetAny() error = %v", err)
+	}
+	if got.ID != e.ID || status != provider.StatusRunning {
+		t.Errorf("GetAny() = %s %s, want %s %s", got.ID, status, e.ID, provider.StatusRunning)
+	}
+	if _, _, err := m.GetAny(context.Background(), uuid.New()); !errors.Is(err, db.ErrEnvNotFound) {
+		t.Errorf("GetAny() unknown id error = %v, want ErrEnvNotFound", err)
 	}
 }
 

@@ -94,7 +94,7 @@ func TestDeleteEnvByAdmin(t *testing.T) {
 	owner := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
 	created := s.createEnv(t, owner)
 
-	if rec := s.delete(t, s.keyWithRole(t, db.RoleAdmin), created.ID.String()); rec.Code != http.StatusAccepted {
+	if rec := s.delete(t, s.adminToken(t), created.ID.String()); rec.Code != http.StatusAccepted {
 		t.Errorf("admin delete status = %d, want %d; body %s", rec.Code, http.StatusAccepted, rec.Body)
 	}
 }

@@ -77,7 +77,7 @@ func TestGetEnvAccess(t *testing.T) {
 		id   string
 		want int
 	}{
-		{name: "admin", key: s.keyWithRole(t, db.RoleAdmin), id: created.ID.String(), want: http.StatusOK},
+		{name: "admin", key: s.adminToken(t), id: created.ID.String(), want: http.StatusOK},
 		{name: "other user", key: s.keyWithRole(t, db.RoleUser), id: created.ID.String(), want: http.StatusNotFound},
 		{name: "unknown id", key: owner, id: uuid.NewString(), want: http.StatusNotFound},
 		{name: "invalid id", key: owner, id: "nope", want: http.StatusBadRequest},

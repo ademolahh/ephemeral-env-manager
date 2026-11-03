@@ -61,7 +61,7 @@ func TestGetBudgetAccess(t *testing.T) {
 	s := newServer(t)
 	ownerID, ownerKey := s.callerWithRole(t, db.RoleUser)
 	otherKey := s.keyWithRole(t, db.RoleUser)
-	adminKey := s.keyWithRole(t, db.RoleAdmin)
+	adminKey := s.adminToken(t)
 	for _, tc := range []struct {
 		name, key, id string
 		want          int
@@ -99,7 +99,7 @@ func futureRFC3339() string {
 func TestSetBudget(t *testing.T) {
 	s := newServer(t)
 	ctx := context.Background()
-	_, admin := s.callerWithRole(t, db.RoleAdmin)
+	admin := s.adminToken(t)
 	target, _ := s.callerWithRole(t, db.RoleUser)
 	if _, err := s.tx.Exec(ctx, `UPDATE callers SET budget_set_at = now() - interval '1 day' WHERE id = $1`, target); err != nil {
 		t.Fatalf("backdate budget_set_at: %v", err)
@@ -167,7 +167,7 @@ func TestSetBudgetForbidden(t *testing.T) {
 
 func TestSetBudgetRejected(t *testing.T) {
 	s := newServer(t)
-	_, admin := s.callerWithRole(t, db.RoleAdmin)
+	admin := s.adminToken(t)
 	target, _ := s.callerWithRole(t, db.RoleUser)
 	future := futureRFC3339()
 	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
@@ -203,7 +203,7 @@ func TestSetBudgetRejected(t *testing.T) {
 
 func TestSetBudgetZeroQuotaBlocksNewEnvironments(t *testing.T) {
 	s := newServer(t)
-	_, admin := s.callerWithRole(t, db.RoleAdmin)
+	admin := s.adminToken(t)
 	target, key := s.callerWithRole(t, db.RoleUser)
 
 	rec := s.putBudget(t, admin, target.String(), `{"quota": {}, "cost_budget_total": "0", "budget_expires_at": "`+futureRFC3339()+`"}`)
@@ -293,7 +293,7 @@ func TestCreateCaller(t *testing.T) {
 		t.Errorf("stored github = %v, %v, want octocat, 583231", login, githubID)
 	}
 
-	if rec := s.getBudget(t, s.keyWithRole(t, db.RoleAdmin), got.ID.String()); rec.Code != http.StatusOK {
+	if rec := s.getBudget(t, s.adminToken(t), got.ID.String()); rec.Code != http.StatusOK {
 		t.Errorf("admin get new caller budget = %d, want 200; body %s", rec.Code, rec.Body)
 	}
 }
@@ -302,7 +302,7 @@ func TestCreateCallerMinimalPrivilege(t *testing.T) {
 	s := newServer(t)
 	before := time.Now()
 
-	for name, key := range map[string]string{"no api key": "", "admin": s.keyWithRole(t, db.RoleAdmin)} {
+	for name, key := range map[string]string{"no api key": "", "admin": s.adminToken(t)} {
 		t.Run(name, func(t *testing.T) {
 			rec := s.postCaller(t, key, `{}`)
 			if rec.Code != http.StatusCreated {

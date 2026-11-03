@@ -59,7 +59,7 @@ func (s server) put(t *testing.T, key, path, body string) *httptest.ResponseReco
 
 func TestSetCapacity(t *testing.T) {
 	s := newServer(t)
-	admin := s.keyWithRole(t, db.RoleAdmin)
+	admin := s.adminToken(t)
 	s.createEnv(t, s.keyWithRole(t, db.RoleUser))
 
 	rec := s.put(t, admin, "/capacity/docker", `{"total": {"cpu_core": 200, "ram_gb": 150, "disk_gb": 2000}}`)
@@ -103,7 +103,7 @@ func TestSetCapacityForbidden(t *testing.T) {
 
 func TestSetCapacityRejected(t *testing.T) {
 	s := newServer(t)
-	admin := s.keyWithRole(t, db.RoleAdmin)
+	admin := s.adminToken(t)
 	s.createEnv(t, s.keyWithRole(t, db.RoleUser))
 
 	tests := []struct {

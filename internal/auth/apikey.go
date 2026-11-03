@@ -7,13 +7,17 @@ import (
 )
 
 func GenerateAPIKey() (key string, hash []byte) {
-	b := make([]byte, 32)
-	rand.Read(b)
-	key = "eem_" + base64.RawURLEncoding.EncodeToString(b)
+	key = generateToken("eem_")
 	return key, HashAPIKey(key)
 }
 
 func HashAPIKey(key string) []byte {
 	sum := sha256.Sum256([]byte(key))
 	return sum[:]
+}
+
+func generateToken(prefix string) string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return prefix + base64.RawURLEncoding.EncodeToString(b)
 }

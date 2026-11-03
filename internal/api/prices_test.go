@@ -14,7 +14,7 @@ import (
 
 func TestSetPrices(t *testing.T) {
 	s := newServer(t)
-	admin := s.keyWithRole(t, db.RoleAdmin)
+	admin := s.adminToken(t)
 
 	rec := s.put(t, admin, "/prices/docker", `{"cpu_core": "0.01", "ram_gb": 0.02, "disk_gb": "0.001"}`)
 	if rec.Code != http.StatusNoContent {
@@ -65,7 +65,7 @@ func TestSetPricesForbidden(t *testing.T) {
 
 func TestSetPricesRejected(t *testing.T) {
 	s := newServer(t)
-	admin := s.keyWithRole(t, db.RoleAdmin)
+	admin := s.adminToken(t)
 
 	tests := []struct {
 		name string
