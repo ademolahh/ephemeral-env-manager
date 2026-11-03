@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -158,11 +159,26 @@ func TestSetCapacityPoolShrinkBelowUsage(t *testing.T) {
 	allocate(t, tx, provider.Docker, provider.Resources{CPUCore: 10})
 
 	err := SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUCore: 8, RAMGB: 64, DiskGB: 500})
-	if got := pgCode(err); got != "23514" {
-		t.Fatalf("SetCapacityPool() error = %v, want check violation", err)
+	if !errors.Is(err, ErrCapacityBelowUsage) {
+		t.Fatalf("SetCapacityPool() error = %v, want %v", err, ErrCapacityBelowUsage)
 	}
 	if !strings.HasPrefix(err.Error(), "set capacity pool docker:") {
 		t.Errorf("SetCapacityPool() error = %v, want set capacity pool docker prefix", err)
+	}
+
+	got := getPool(t, tx, provider.Docker)
+	if want := (provider.Resources{CPUCore: 16, RAMGB: 64, DiskGB: 500}); got.Default != want {
+		t.Errorf("default = %+v, want unchanged %+v", got.Default, want)
+	}
+	if want := (provider.Resources{CPUCore: 6, RAMGB: 64, DiskGB: 500}); got.Available != want {
+		t.Errorf("available = %+v, want unchanged %+v", got.Available, want)
+	}
+
+	if err := SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUCore: 10, RAMGB: 64, DiskGB: 500}); err != nil {
+		t.Fatalf("SetCapacityPool() down to usage error = %v", err)
+	}
+	if got := getPool(t, tx, provider.Docker).Available.CPUCore; got != 0 {
+		t.Errorf("available cpu = %d, want 0 when total equals usage", got)
 	}
 }
 

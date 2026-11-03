@@ -11,7 +11,10 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
-var ErrPoolNotFound = errors.New("capacity pool not found")
+var (
+	ErrPoolNotFound       = errors.New("capacity pool not found")
+	ErrCapacityBelowUsage = errors.New("capacity pool total below current usage")
+)
 
 type CapacityPool struct {
 	Default   provider.Resources
@@ -19,7 +22,7 @@ type CapacityPool struct {
 }
 
 func SetCapacityPool(ctx context.Context, q DBTX, p provider.Type, total provider.Resources) error {
-	_, err := q.Exec(ctx, `
+	tag, err := q.Exec(ctx, `
 		INSERT INTO capacity_pools (
 			id, provider,
 			default_cpu_cores, default_ram_gb, default_disk_gb,
@@ -32,11 +35,17 @@ func SetCapacityPool(ctx context.Context, q DBTX, p provider.Type, total provide
 			available_disk_gb   = capacity_pools.available_disk_gb + EXCLUDED.default_disk_gb - capacity_pools.default_disk_gb,
 			default_cpu_cores   = EXCLUDED.default_cpu_cores,
 			default_ram_gb      = EXCLUDED.default_ram_gb,
-			default_disk_gb     = EXCLUDED.default_disk_gb`,
+			default_disk_gb     = EXCLUDED.default_disk_gb
+		WHERE capacity_pools.default_cpu_cores - capacity_pools.available_cpu_cores <= EXCLUDED.default_cpu_cores
+			AND capacity_pools.default_ram_gb - capacity_pools.available_ram_gb <= EXCLUDED.default_ram_gb
+			AND capacity_pools.default_disk_gb - capacity_pools.available_disk_gb <= EXCLUDED.default_disk_gb`,
 		uuid.New(), p, total.CPUCore, total.RAMGB, total.DiskGB,
 	)
 	if err != nil {
 		return fmt.Errorf("set capacity pool %s: %w", p, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("set capacity pool %s: %w", p, ErrCapacityBelowUsage)
 	}
 	return nil
 }

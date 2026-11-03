@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -58,16 +57,7 @@ func (h *Handler) CreateEnv(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req createEnvRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
-	dec.DisallowUnknownFields()
-
-	if err := dec.Decode(&req); err != nil {
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
-			return
-		}
-
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 

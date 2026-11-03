@@ -13,7 +13,10 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
-var ErrCallerNotFound = errors.New("caller not found")
+var (
+	ErrCallerNotFound = errors.New("caller not found")
+	ErrGithubIDTaken  = errors.New("github id already linked to a caller")
+)
 
 type NewCaller struct {
 	GithubLogin     *string
@@ -64,19 +67,23 @@ func GetCallerBudget(ctx context.Context, q DBTX, id uuid.UUID) (CallerBudget, e
 
 func CreateCaller(ctx context.Context, q DBTX, c NewCaller) (uuid.UUID, error) {
 	id := uuid.New()
-	_, err := q.Exec(ctx, `
+	tag, err := q.Exec(ctx, `
 		INSERT INTO callers (
 			id, github_login, github_id,
 			quota_cpu_cores, quota_ram_gb, quota_disk_gb,
 			cost_budget_total, budget_expires_at, role, permitted_env
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (github_id) DO NOTHING`,
 		id, c.GithubLogin, c.GithubID,
 		c.Quota.CPUCore, c.Quota.RAMGB, c.Quota.DiskGB,
 		c.CostBudgetTotal, c.BudgetExpiresAt, c.Role, c.PermittedEnv,
 	)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("create caller: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return uuid.Nil, fmt.Errorf("create caller: %w", ErrGithubIDTaken)
 	}
 	return id, nil
 }

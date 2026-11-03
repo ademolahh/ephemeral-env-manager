@@ -27,6 +27,8 @@ func TestErrorStatus(t *testing.T) {
 		{db.ErrPricesNotFound, http.StatusServiceUnavailable},
 		{db.ErrEnvNotFound, http.StatusNotFound},
 		{db.ErrInvalidTransition, http.StatusConflict},
+		{db.ErrCapacityBelowUsage, http.StatusConflict},
+		{db.ErrGithubIDTaken, http.StatusConflict},
 		{db.ErrCallerNotFound, http.StatusNotFound},
 		{errors.New("connection reset"), http.StatusInternalServerError},
 	}

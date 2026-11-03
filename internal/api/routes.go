@@ -11,11 +11,12 @@ var webFiles embed.FS
 
 func Routes(h *Handler) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /callers", h.CreateCaller)
 	mux.HandleFunc("GET /callers/{id}/budget", h.GetBudget)
 	mux.Handle("PUT /callers/{id}/budget", requireAdmin(http.HandlerFunc(h.SetBudget)))
 	mux.HandleFunc("POST /envs", h.CreateEnv)
 	mux.HandleFunc("GET /capacity", h.GetCapacity)
+	mux.Handle("PUT /capacity/{provider}", requireAdmin(http.HandlerFunc(h.SetCapacity)))
+	mux.Handle("PUT /prices/{provider}", requireAdmin(http.HandlerFunc(h.SetPrices)))
 	mux.HandleFunc("GET /envs", h.ListEnvs)
 	mux.HandleFunc("GET /envs/{id}", h.GetEnv)
 	mux.HandleFunc("DELETE /envs/{id}", h.DeleteEnv)
@@ -28,6 +29,12 @@ func Routes(h *Handler) http.Handler {
 			frontend.ServeHTTP(w, r)
 			return
 		}
+
+		if r.Method == http.MethodPost && r.URL.Path == "/callers" {
+			h.CreateCaller(w, r)
+			return
+		}
+
 		secured.ServeHTTP(w, r)
 	})
 }

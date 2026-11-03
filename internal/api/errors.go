@@ -38,7 +38,9 @@ func errorStatus(err error) int {
 		errors.Is(err, db.ErrCallerNotFound):
 		return http.StatusNotFound
 
-	case errors.Is(err, db.ErrInvalidTransition):
+	case errors.Is(err, db.ErrInvalidTransition),
+		errors.Is(err, db.ErrCapacityBelowUsage),
+		errors.Is(err, db.ErrGithubIDTaken):
 		return http.StatusConflict
 
 	case errors.Is(err, env.ErrCapacityExceeded),

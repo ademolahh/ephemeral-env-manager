@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -12,6 +11,70 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
+
+var (
+	defaultQuota        = provider.Resources{CPUCore: 4, RAMGB: 16, DiskGB: 50}
+	defaultCostBudget   = decimal.NewFromInt(100)
+	defaultBudgetPeriod = 30 * 24 * time.Hour
+)
+
+type createCallerRequest struct {
+	GithubLogin string `json:"github_login"`
+	GithubID    string `json:"github_id"`
+}
+
+type callerResponse struct {
+	ID              uuid.UUID          `json:"id"`
+	Role            db.Role            `json:"role"`
+	PermittedEnv    db.EnvType         `json:"permitted_env"`
+	GithubLogin     *string            `json:"github_login"`
+	GithubID        *string            `json:"github_id"`
+	Quota           provider.Resources `json:"quota"`
+	CostBudgetTotal decimal.Decimal    `json:"cost_budget_total"`
+	BudgetExpiresAt time.Time          `json:"budget_expires_at"`
+}
+
+func (h *Handler) CreateCaller(w http.ResponseWriter, r *http.Request) {
+	var req createCallerRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	c := db.NewCaller{
+		GithubLogin:     optional(req.GithubLogin),
+		GithubID:        optional(req.GithubID),
+		Role:            db.RoleUser,
+		PermittedEnv:    db.EnvRegularTesting,
+		Quota:           defaultQuota,
+		CostBudgetTotal: defaultCostBudget,
+		BudgetExpiresAt: time.Now().Add(defaultBudgetPeriod).UTC().Truncate(time.Second),
+	}
+
+	id, err := db.CreateCaller(r.Context(), h.db, c)
+	if err != nil {
+		writeServiceError(w, "create caller", err)
+		return
+	}
+
+	w.Header().Set("Location", "/callers/"+id.String()+"/budget")
+	writeJSON(w, http.StatusCreated, callerResponse{
+		ID:              id,
+		Role:            c.Role,
+		PermittedEnv:    c.PermittedEnv,
+		GithubLogin:     c.GithubLogin,
+		GithubID:        c.GithubID,
+		Quota:           c.Quota,
+		CostBudgetTotal: c.CostBudgetTotal,
+		BudgetExpiresAt: c.BudgetExpiresAt,
+	})
+}
+
+func optional(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
 
 type setBudgetRequest struct {
 	Quota           *provider.Resources `json:"quota"`
@@ -79,15 +142,7 @@ func (h *Handler) SetBudget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req setBudgetRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
-			return
-		}
-
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 

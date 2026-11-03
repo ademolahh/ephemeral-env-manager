@@ -143,6 +143,11 @@ func (m *Manager) owned(ctx context.Context, caller db.AuthenticatedCaller, id u
 	return e, nil
 }
 
+func (m *Manager) HasProvider(t provider.Type) bool {
+	_, ok := m.providers[t]
+	return ok
+}
+
 func (m *Manager) Status(ctx context.Context, e db.Environment) (provider.Status, error) {
 	p, ok := m.providers[e.Provider]
 	if !ok {

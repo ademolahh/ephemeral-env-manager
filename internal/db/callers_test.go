@@ -186,8 +186,16 @@ func TestCreateCallerDuplicateGithubID(t *testing.T) {
 		t.Fatalf("CreateCaller() error = %v", err)
 	}
 	_, err := CreateCaller(context.Background(), tx, c)
-	if got := pgCode(err); got != "23505" {
-		t.Errorf("CreateCaller() duplicate error = %v, want unique violation", err)
+	if !errors.Is(err, ErrGithubIDTaken) {
+		t.Errorf("CreateCaller() duplicate error = %v, want %v", err, ErrGithubIDTaken)
+	}
+
+	var n int
+	if err := tx.QueryRow(context.Background(), `SELECT count(*) FROM callers WHERE github_id = $1`, *c.GithubID).Scan(&n); err != nil {
+		t.Fatalf("count callers: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("callers with github_id = %d, want 1", n)
 	}
 }
 
