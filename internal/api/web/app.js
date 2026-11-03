@@ -34,9 +34,77 @@ const getCapacity = () => requestJSON("/capacity");
 const deleteEnvironment = (id) =>
   requestJSON(`/envs/${encodeURIComponent(id)}`, "DELETE");
 
+async function createCaller(details) {
+  const response = await fetch("/callers", {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(details),
+  });
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      message = (await response.json()).error || message;
+    } catch (_) {}
+    throw new Error(message);
+  }
+  return response.json();
+}
+
+async function updateAdmin(path, details) {
+  const response = await fetch(path, {
+    method: "PUT",
+    cache: "no-store",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(details),
+  });
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      message = (await response.json()).error || message;
+    } catch (_) {}
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+}
+
+async function submitAdminForm(formId, messageId, path, details, success, refresh) {
+  const form = $(formId);
+  const button = form.querySelector('button[type="submit"]');
+  const message = $(messageId);
+  button.disabled = true;
+  message.hidden = true;
+  try {
+    await updateAdmin(path, details);
+    message.className = "admin-message success";
+    message.textContent = success;
+    message.hidden = false;
+    if (refresh) await refresh();
+  } catch (error) {
+    if (error.status === 401) {
+      apiKey = "";
+      sessionStorage.removeItem(keyStorage);
+      showLogin("Your API key is invalid or expired.");
+      return;
+    }
+    message.className = "admin-message error";
+    message.textContent = error.message;
+    message.hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function showLogin(message = "") {
   $("login-view").hidden = false;
   $("dashboard-view").hidden = true;
+  $("admin-view").hidden = true;
+  $("page-label").textContent = "Environments";
+  document.title = "Environments · EEM";
   $("account").hidden = true;
   $("caller-id").textContent = "—";
   $("status-filter").value = "all";
@@ -54,12 +122,40 @@ function showLogin(message = "") {
   $("budget-fill").parentElement.setAttribute("aria-valuenow", "0");
   $("capacity-pools").replaceChildren();
   $("capacity-error").hidden = true;
+  $("caller-form").reset();
+  $("caller-error").hidden = true;
+  $("caller-success").hidden = true;
+  for (const formId of ["admin-budget-form", "admin-capacity-form", "admin-prices-form"]) {
+    $(formId).reset();
+  }
+  for (const messageId of ["admin-budget-message", "admin-capacity-message", "admin-prices-message"]) {
+    $(messageId).hidden = true;
+  }
 }
 
 function showDashboard() {
   $("login-view").hidden = true;
-  $("dashboard-view").hidden = false;
   $("account").hidden = false;
+  showPage();
+}
+
+function showPage() {
+  if (!apiKey) return;
+  const admin = location.hash === "#admin";
+  $("dashboard-view").hidden = admin;
+  $("admin-view").hidden = !admin;
+  $("page-label").textContent = admin ? "Admin actions" : "Environments";
+  document.title = `${admin ? "Admin actions" : "Environments"} · EEM`;
+  for (const [id, selected] of [
+    ["environments-nav", !admin],
+    ["admin-nav", admin],
+    ["mobile-environments-nav", !admin],
+    ["mobile-admin-nav", admin],
+  ]) {
+    $(id).classList.toggle("active", selected);
+    if (selected) $(id).setAttribute("aria-current", "page");
+    else $(id).removeAttribute("aria-current");
+  }
 }
 
 function readableDate(value) {
@@ -397,6 +493,85 @@ $("key-form").addEventListener("submit", async (event) => {
   }
 });
 
+$("caller-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("caller-form").querySelector('button[type="submit"]');
+  const login = $("github-login").value.trim();
+  const id = $("github-id").value.trim();
+  const details = {};
+  if (login) details.github_login = login;
+  if (id) details.github_id = id;
+
+  button.disabled = true;
+  button.textContent = "Creating…";
+  $("caller-error").hidden = true;
+  $("caller-success").hidden = true;
+  try {
+    const caller = await createCaller(details);
+    $("caller-created-id").textContent = caller.id;
+    $("caller-success").hidden = false;
+    $("caller-form").reset();
+  } catch (error) {
+    $("caller-error").textContent = `Could not create caller: ${error.message}`;
+    $("caller-error").hidden = false;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Create caller";
+  }
+});
+
+$("admin-budget-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const callerID = $("admin-caller-id").value.trim();
+  await submitAdminForm(
+    "admin-budget-form",
+    "admin-budget-message",
+    `/callers/${encodeURIComponent(callerID)}/budget`,
+    {
+      quota: {
+        cpu_core: Number($("admin-quota-cpu").value),
+        ram_gb: Number($("admin-quota-ram").value),
+        disk_gb: Number($("admin-quota-disk").value),
+      },
+      cost_budget_total: $("admin-budget-total").value,
+      budget_expires_at: new Date($("admin-budget-expires").value).toISOString(),
+    },
+    "Budget and quota updated.",
+    callerID === $("caller-id").textContent ? loadBudget : null,
+  );
+});
+
+$("admin-capacity-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await submitAdminForm(
+    "admin-capacity-form",
+    "admin-capacity-message",
+    `/capacity/${encodeURIComponent($("admin-capacity-provider").value.trim())}`,
+    { total: {
+      cpu_core: Number($("admin-capacity-cpu").value),
+      ram_gb: Number($("admin-capacity-ram").value),
+      disk_gb: Number($("admin-capacity-disk").value),
+    } },
+    "Capacity updated.",
+    loadCapacity,
+  );
+});
+
+$("admin-prices-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await submitAdminForm(
+    "admin-prices-form",
+    "admin-prices-message",
+    `/prices/${encodeURIComponent($("admin-prices-provider").value.trim())}`,
+    {
+      cpu_core: $("admin-price-cpu").value,
+      ram_gb: $("admin-price-ram").value,
+      disk_gb: $("admin-price-disk").value,
+    },
+    "Hourly prices updated.",
+  );
+});
+
 $("toggle-key").addEventListener("click", () => {
   const input = $("api-key");
   input.type = input.type === "password" ? "text" : "password";
@@ -417,11 +592,15 @@ $("delete-dialog").addEventListener("close", () => { pendingDelete = null; });
 $("delete-dialog").addEventListener("cancel", (event) => {
   if ($("delete-confirm").disabled) event.preventDefault();
 });
-$("sign-out").addEventListener("click", () => {
+function signOut() {
   apiKey = "";
   sessionStorage.removeItem(keyStorage);
   showLogin();
-});
+}
+
+$("sign-out").addEventListener("click", signOut);
+$("admin-sign-out").addEventListener("click", signOut);
+window.addEventListener("hashchange", showPage);
 
 if (apiKey) {
   showDashboard();

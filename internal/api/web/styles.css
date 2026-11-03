@@ -64,3 +64,31 @@
 .capacity-marker{width:2px;margin-left:-1px;background:#aa7419}
 .capacity-detail{color:#71859a;font-size:12px;line-height:1.4;overflow-wrap:anywhere}
 @media(max-width:750px){.capacity-panel{margin-top:20px;padding:18px}.capacity-legend{margin-top:12px}.capacity-row{grid-template-columns:44px 1fr;gap:8px 10px}.capacity-detail{grid-column:1/-1}}
+
+.caller-create-note{color:#8290a1;font-size:12px;line-height:1.5;margin:0 0 18px}
+.caller-success{margin-top:14px;border-radius:8px;background:#edf9f6;color:#147b6d;padding:12px;font-size:12px;line-height:1.5}
+.caller-success code{display:block;margin-top:4px;font-size:11px;overflow-wrap:anywhere}
+.caller-success p{margin:10px 0 0}
+
+.admin-panel{margin-top:28px;background:#fff;border:1px solid #e6ecf2;border-radius:12px;padding:25px}
+.admin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr));gap:16px;margin-top:22px}
+.admin-card{min-width:0;border:1px solid #e5ebf1;border-radius:10px;padding:20px;display:flex;flex-direction:column}
+.admin-card h3{font-size:14px;color:#26364a;margin:0 0 18px}
+.admin-card label{display:block;color:#64768a;font-size:11px;font-weight:700;margin:12px 0 7px}
+.admin-card input{width:100%;min-width:0;height:40px;border:1px solid #dce4ec;border-radius:8px;background:#fff;color:#29394c;padding:0 10px;font-size:12px}
+.admin-card input:focus{outline:2px solid #31b8a5;outline-offset:1px}
+.admin-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.admin-submit{border:0;border-radius:8px;background:#22ad98;color:#fff;padding:11px 14px;margin-top:20px;font-size:12px;font-weight:750}
+.admin-submit:hover{background:#168e7d}
+.admin-submit:disabled{opacity:.6;cursor:wait}
+.admin-message{font-size:12px;line-height:1.5;margin:12px 0 0}
+.admin-message.success{color:#147b6d}
+.admin-message.error{color:#bd3d4a}
+@media(max-width:750px){.admin-panel{margin-top:20px;padding:18px}.admin-card{padding:16px}}
+
+.sidebar a.nav-item{text-decoration:none}
+.sidebar a.nav-item:hover{background:#1d2b3e}
+.nav-item .nav-dot{display:none}
+.nav-item.active .nav-dot{display:block}
+.mobile-nav{display:none}
+@media(max-width:750px){.mobile-nav{display:flex;gap:12px;order:3;width:100%}.mobile-nav a{color:#71859a;text-decoration:none;font-size:12px;font-weight:700;padding:5px 0}.mobile-nav a.active{color:#168d7b;border-bottom:2px solid #22ad98}}

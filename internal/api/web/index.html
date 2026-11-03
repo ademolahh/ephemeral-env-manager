@@ -18,10 +18,14 @@
           ></a
         >
         <div class="sidebar-section">WORKSPACE</div>
-        <div class="nav-item active">
+        <a id="environments-nav" class="nav-item active" href="#environments" aria-current="page">
           <span class="nav-icon">▦</span> Environments
           <span class="nav-dot"></span>
-        </div>
+        </a>
+        <a id="admin-nav" class="nav-item" href="#admin">
+          <span class="nav-icon">⚙</span> Admin actions
+          <span class="nav-dot"></span>
+        </a>
         <div class="sidebar-bottom">
           <span class="status-pulse"></span><span>System ready</span>
         </div>
@@ -29,8 +33,12 @@
 
       <main class="main">
         <header class="topbar">
-          <span class="breadcrumb">Workspace <span>/</span> Environments</span
-          ><span id="account" class="account" hidden>Caller ID <code id="caller-id">—</code></span>
+          <span class="breadcrumb">Workspace <span>/</span> <span id="page-label">Environments</span></span>
+          <nav class="mobile-nav" aria-label="Workspace">
+            <a id="mobile-environments-nav" href="#environments" aria-current="page">Environments</a>
+            <a id="mobile-admin-nav" href="#admin">Admin</a>
+          </nav>
+          <span id="account" class="account" hidden>Caller ID <code id="caller-id">—</code></span>
         </header>
 
         <section id="login-view" class="login-view">
@@ -204,6 +212,83 @@
               </button>
             </div>
           </div>
+        </section>
+
+        <section id="admin-view" class="dashboard" hidden>
+          <div class="heading-row">
+            <div>
+              <div class="eyebrow"><span class="eyebrow-line"></span> SETTINGS</div>
+              <h1>Admin actions</h1>
+              <p>Manage callers, budgets, capacity, and prices.</p>
+            </div>
+            <button id="admin-sign-out" class="outline-button">
+              Sign out <span>↗</span>
+            </button>
+          </div>
+          <section class="admin-panel" aria-labelledby="admin-heading">
+            <div class="budget-heading">
+              <div>
+                <h2 id="admin-heading">Manage settings</h2>
+                <p>Budget, capacity, and price changes require an admin API key.</p>
+              </div>
+            </div>
+            <div class="admin-grid">
+              <form id="caller-form" class="admin-card">
+                <h3>Create caller</h3>
+                <p class="caller-create-note">GitHub details are optional. Creating a caller does not issue an API key.</p>
+                <label for="github-login">GitHub login (optional)</label>
+                <input id="github-login" name="github-login" type="text" autocomplete="username" />
+                <label for="github-id">GitHub ID (optional)</label>
+                <input id="github-id" name="github-id" type="text" inputmode="numeric" />
+                <button class="admin-submit" type="submit">Create caller</button>
+                <p id="caller-error" class="form-error" role="alert" hidden></p>
+                <div id="caller-success" class="caller-success" role="status" hidden>
+                  Caller created. ID: <code id="caller-created-id"></code>
+                  <p>You need an API key for this caller to sign in.</p>
+                </div>
+              </form>
+              <form id="admin-budget-form" class="admin-card">
+                <h3>Caller budget and quota</h3>
+                <label for="admin-caller-id">Caller ID</label>
+                <input id="admin-caller-id" type="text" required />
+                <div class="admin-fields">
+                  <div><label for="admin-quota-cpu">CPU cores</label><input id="admin-quota-cpu" type="number" min="0" step="1" required /></div>
+                  <div><label for="admin-quota-ram">RAM (GB)</label><input id="admin-quota-ram" type="number" min="0" step="1" required /></div>
+                  <div><label for="admin-quota-disk">Disk (GB)</label><input id="admin-quota-disk" type="number" min="0" step="1" required /></div>
+                </div>
+                <label for="admin-budget-total">Total cost budget (USD)</label>
+                <input id="admin-budget-total" type="number" min="0" step="any" required />
+                <label for="admin-budget-expires">Budget expires</label>
+                <input id="admin-budget-expires" type="datetime-local" required />
+                <button class="admin-submit" type="submit">Set budget and quota</button>
+                <p id="admin-budget-message" class="admin-message" role="status" hidden></p>
+              </form>
+              <form id="admin-capacity-form" class="admin-card">
+                <h3>Provider capacity</h3>
+                <label for="admin-capacity-provider">Provider</label>
+                <input id="admin-capacity-provider" type="text" value="docker" required />
+                <div class="admin-fields">
+                  <div><label for="admin-capacity-cpu">CPU cores</label><input id="admin-capacity-cpu" type="number" min="1" step="1" required /></div>
+                  <div><label for="admin-capacity-ram">RAM (GB)</label><input id="admin-capacity-ram" type="number" min="1" step="1" required /></div>
+                  <div><label for="admin-capacity-disk">Disk (GB)</label><input id="admin-capacity-disk" type="number" min="1" step="1" required /></div>
+                </div>
+                <button class="admin-submit" type="submit">Set capacity</button>
+                <p id="admin-capacity-message" class="admin-message" role="status" hidden></p>
+              </form>
+              <form id="admin-prices-form" class="admin-card">
+                <h3>Hourly prices (USD)</h3>
+                <label for="admin-prices-provider">Provider</label>
+                <input id="admin-prices-provider" type="text" value="docker" required />
+                <div class="admin-fields">
+                  <div><label for="admin-price-cpu">Per CPU core</label><input id="admin-price-cpu" type="number" min="0" step="any" required /></div>
+                  <div><label for="admin-price-ram">Per GB RAM</label><input id="admin-price-ram" type="number" min="0" step="any" required /></div>
+                  <div><label for="admin-price-disk">Per GB disk</label><input id="admin-price-disk" type="number" min="0" step="any" required /></div>
+                </div>
+                <button class="admin-submit" type="submit">Set prices</button>
+                <p id="admin-prices-message" class="admin-message" role="status" hidden></p>
+              </form>
+            </div>
+          </section>
         </section>
       </main>
     </div>
