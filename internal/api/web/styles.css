@@ -92,3 +92,10 @@
 .nav-item.active .nav-dot{display:block}
 .mobile-nav{display:none}
 @media(max-width:750px){.mobile-nav{display:flex;gap:12px;order:3;width:100%}.mobile-nav a{color:#71859a;text-decoration:none;font-size:12px;font-weight:700;padding:5px 0}.mobile-nav a.active{color:#168d7b;border-bottom:2px solid #22ad98}}
+
+.login-role-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;background:#f0f4f7;border-radius:9px;padding:4px;margin-bottom:23px}
+.login-role-switch button{border:0;border-radius:7px;background:transparent;color:#718296;padding:10px;font-size:12px;font-weight:750}
+.login-role-switch button.active{background:#fff;color:#168d7b;box-shadow:0 1px 5px #20304414}
+.login-role-switch button:focus-visible{outline:2px solid #31b8a5;outline-offset:2px}
+.login-text-input{display:block;width:100%;height:48px;border:1px solid #dce4ec;border-radius:8px;background:#fff;color:#29394c;padding:0 12px;margin-bottom:17px;font-size:13px}
+.login-text-input:focus{outline:2px solid #31b8a5;outline-offset:1px}

@@ -22,7 +22,7 @@
           <span class="nav-icon">▦</span> Environments
           <span class="nav-dot"></span>
         </a>
-        <a id="admin-nav" class="nav-item" href="#admin">
+        <a id="admin-nav" class="nav-item" href="#admin" hidden>
           <span class="nav-icon">⚙</span> Admin actions
           <span class="nav-dot"></span>
         </a>
@@ -36,9 +36,10 @@
           <span class="breadcrumb">Workspace <span>/</span> <span id="page-label">Environments</span></span>
           <nav class="mobile-nav" aria-label="Workspace">
             <a id="mobile-environments-nav" href="#environments" aria-current="page">Environments</a>
-            <a id="mobile-admin-nav" href="#admin">Admin</a>
+            <a id="mobile-admin-nav" href="#admin" hidden>Admin panel</a>
           </nav>
           <span id="account" class="account" hidden>Caller ID <code id="caller-id">—</code></span>
+          <span id="admin-account" class="account" hidden>Admin <code id="admin-name">—</code></span>
         </header>
 
         <section id="login-view" class="login-view">
@@ -48,8 +49,8 @@
             </div>
             <h1>Every environment,<br /><em>in one place.</em></h1>
             <p>
-              Enter your API key to see the environments linked to your account,
-              with their status, resources, and expiry at a glance.
+              Sign in as a caller to view your environments, or as an admin to
+              manage callers and shared settings.
             </p>
             <div class="login-features">
               <span>● Live status</span><span>● Resource visibility</span
@@ -62,9 +63,13 @@
               ><span class="card-overline">SECURE ACCESS</span>
             </div>
             <h2>Welcome back</h2>
-            <p class="card-description">
+            <p id="login-description" class="card-description">
               Use your EEM API key to access your environments.
             </p>
+            <div class="login-role-switch" aria-label="Sign-in type">
+              <button id="caller-login-choice" type="button" class="active" aria-pressed="true">Caller</button>
+              <button id="admin-login-choice" type="button" aria-pressed="false">Admin</button>
+            </div>
             <form id="key-form">
               <label for="api-key">API key</label>
               <div class="key-input">
@@ -88,8 +93,16 @@
               </button>
             </form>
             <p id="login-error" class="form-error" role="alert" hidden></p>
+            <form id="admin-login-form" hidden>
+              <label for="admin-username">Username</label>
+              <input id="admin-username" class="login-text-input" type="text" autocomplete="username" spellcheck="false" required />
+              <label for="admin-password">Password</label>
+              <input id="admin-password" class="login-text-input" type="password" autocomplete="current-password" required />
+              <button class="key-button" type="submit">Sign in as admin <span>→</span></button>
+              <p id="admin-login-error" class="form-error" role="alert" hidden></p>
+            </form>
             <div class="card-footer">
-              Your API key stays in this browser tab session.
+              Your session stays in this browser tab.
             </div>
           </div>
         </section>
@@ -101,7 +114,7 @@
                 <span class="eyebrow-line"></span> OVERVIEW
               </div>
               <h1>Environments</h1>
-              <p>All environments associated with your account.</p>
+              <p id="dashboard-description">All environments associated with your account.</p>
             </div>
             <button id="sign-out" class="outline-button">
               Sign out <span>↗</span>
@@ -128,7 +141,7 @@
               >
             </div>
           </div>
-          <section class="budget-panel" aria-labelledby="budget-heading">
+          <section id="budget-panel" class="budget-panel" aria-labelledby="budget-heading">
             <div class="budget-heading">
               <div>
                 <h2 id="budget-heading">Cost budget (USD)</h2>
@@ -176,8 +189,8 @@
           <div class="list-panel">
             <div class="panel-head">
               <div>
-                <h2>Your environments</h2>
-                <p>Track the lifecycle of your temporary workspaces.</p>
+                <h2 id="list-heading">Your environments</h2>
+                <p id="list-description">Track the lifecycle of your temporary workspaces.</p>
               </div>
               <div class="panel-controls">
                 <label for="status-filter">Status</label>
@@ -221,7 +234,7 @@
               <h1>Admin actions</h1>
               <p>Manage callers, budgets, capacity, and prices.</p>
             </div>
-            <button id="admin-sign-out" class="outline-button">
+            <button id="admin-sign-out" class="outline-button" hidden>
               Sign out <span>↗</span>
             </button>
           </div>
@@ -229,7 +242,7 @@
             <div class="budget-heading">
               <div>
                 <h2 id="admin-heading">Manage settings</h2>
-                <p>Budget, capacity, and price changes require an admin API key.</p>
+                <p>Manage caller budgets, provider capacity, and hourly prices.</p>
               </div>
             </div>
             <div class="admin-grid">
@@ -237,7 +250,7 @@
                 <h3>Create caller</h3>
                 <p class="caller-create-note">GitHub details are optional. Creating a caller does not issue an API key.</p>
                 <label for="github-login">GitHub login (optional)</label>
-                <input id="github-login" name="github-login" type="text" autocomplete="username" />
+                <input id="github-login" name="github-login" type="text" autocomplete="off" />
                 <label for="github-id">GitHub ID (optional)</label>
                 <input id="github-id" name="github-id" type="text" inputmode="numeric" />
                 <button class="admin-submit" type="submit">Create caller</button>
@@ -247,7 +260,7 @@
                   <p>You need an API key for this caller to sign in.</p>
                 </div>
               </form>
-              <form id="admin-budget-form" class="admin-card">
+              <form id="admin-budget-form" class="admin-card" hidden>
                 <h3>Caller budget and quota</h3>
                 <label for="admin-caller-id">Caller ID</label>
                 <input id="admin-caller-id" type="text" required />
@@ -263,7 +276,7 @@
                 <button class="admin-submit" type="submit">Set budget and quota</button>
                 <p id="admin-budget-message" class="admin-message" role="status" hidden></p>
               </form>
-              <form id="admin-capacity-form" class="admin-card">
+              <form id="admin-capacity-form" class="admin-card" hidden>
                 <h3>Provider capacity</h3>
                 <label for="admin-capacity-provider">Provider</label>
                 <input id="admin-capacity-provider" type="text" value="docker" required />
@@ -275,7 +288,7 @@
                 <button class="admin-submit" type="submit">Set capacity</button>
                 <p id="admin-capacity-message" class="admin-message" role="status" hidden></p>
               </form>
-              <form id="admin-prices-form" class="admin-card">
+              <form id="admin-prices-form" class="admin-card" hidden>
                 <h3>Hourly prices (USD)</h3>
                 <label for="admin-prices-provider">Provider</label>
                 <input id="admin-prices-provider" type="text" value="docker" required />

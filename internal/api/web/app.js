@@ -1,15 +1,28 @@
 const keyStorage = "eem_api_key";
+const adminTokenStorage = "eem_admin_token";
+const adminNameStorage = "eem_admin_name";
+const roleStorage = "eem_signed_in_as";
+const adminForms = ["admin-budget-form", "admin-capacity-form", "admin-prices-form"];
+const adminMessages = ["admin-budget-message", "admin-capacity-message", "admin-prices-message"];
 const pageSize = 12;
 const $ = (id) => document.getElementById(id);
 let apiKey = sessionStorage.getItem(keyStorage) || "";
+let adminToken = sessionStorage.getItem(adminTokenStorage) || "";
+let adminName = sessionStorage.getItem(adminNameStorage) || "";
+let signedInAs = sessionStorage.getItem(roleStorage) || (adminToken && !apiKey ? "admin" : apiKey ? "caller" : "");
+let loginMode = location.hash === "#admin" ? "admin" : "caller";
 let pendingDelete = null;
 let currentPage = 1;
+
+const isAdmin = () => signedInAs === "admin" && Boolean(adminToken);
+const isCaller = () => signedInAs === "caller" && Boolean(apiKey);
+const currentToken = () => isAdmin() ? adminToken : apiKey;
 
 async function requestJSON(path, method = "GET") {
   const response = await fetch(path, {
     method,
     cache: "no-store",
-    headers: { Authorization: `Bearer ${apiKey}` },
+    headers: { Authorization: `Bearer ${currentToken()}` },
   });
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
@@ -34,8 +47,8 @@ const getCapacity = () => requestJSON("/capacity");
 const deleteEnvironment = (id) =>
   requestJSON(`/envs/${encodeURIComponent(id)}`, "DELETE");
 
-async function createCaller(details) {
-  const response = await fetch("/callers", {
+async function postJSON(path, details) {
+  const response = await fetch(path, {
     method: "POST",
     cache: "no-store",
     headers: { "Content-Type": "application/json" },
@@ -51,12 +64,15 @@ async function createCaller(details) {
   return response.json();
 }
 
+const createCaller = (details) => postJSON("/callers", details);
+const loginAdmin = (username, password) => postJSON("/admin/login", { username, password });
+
 async function updateAdmin(path, details) {
   const response = await fetch(path, {
     method: "PUT",
     cache: "no-store",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${adminToken}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(details),
@@ -86,9 +102,7 @@ async function submitAdminForm(formId, messageId, path, details, success, refres
     if (refresh) await refresh();
   } catch (error) {
     if (error.status === 401) {
-      apiKey = "";
-      sessionStorage.removeItem(keyStorage);
-      showLogin("Your API key is invalid or expired.");
+      adminSignOut("Your admin session has expired. Sign in again.");
       return;
     }
     message.className = "admin-message error";
@@ -100,12 +114,16 @@ async function submitAdminForm(formId, messageId, path, details, success, refres
 }
 
 function showLogin(message = "") {
-  $("login-view").hidden = false;
-  $("dashboard-view").hidden = true;
-  $("admin-view").hidden = true;
-  $("page-label").textContent = "Environments";
-  document.title = "Environments · EEM";
-  $("account").hidden = true;
+  apiKey = "";
+  adminToken = "";
+  adminName = "";
+  signedInAs = "";
+  sessionStorage.removeItem(keyStorage);
+  sessionStorage.removeItem(adminTokenStorage);
+  sessionStorage.removeItem(adminNameStorage);
+  sessionStorage.removeItem(roleStorage);
+  loginMode = "caller";
+  location.hash = "#environments";
   $("caller-id").textContent = "—";
   $("status-filter").value = "all";
   currentPage = 1;
@@ -122,35 +140,66 @@ function showLogin(message = "") {
   $("budget-fill").parentElement.setAttribute("aria-valuenow", "0");
   $("capacity-pools").replaceChildren();
   $("capacity-error").hidden = true;
-  $("caller-form").reset();
-  $("caller-error").hidden = true;
-  $("caller-success").hidden = true;
-  for (const formId of ["admin-budget-form", "admin-capacity-form", "admin-prices-form"]) {
-    $(formId).reset();
-  }
-  for (const messageId of ["admin-budget-message", "admin-capacity-message", "admin-prices-message"]) {
-    $(messageId).hidden = true;
-  }
+  showPage();
 }
 
-function showDashboard() {
-  $("login-view").hidden = true;
-  $("account").hidden = false;
+function adminSignOut(message = "") {
+  apiKey = "";
+  adminToken = "";
+  adminName = "";
+  signedInAs = "";
+  sessionStorage.removeItem(keyStorage);
+  sessionStorage.removeItem(adminTokenStorage);
+  sessionStorage.removeItem(adminNameStorage);
+  sessionStorage.removeItem(roleStorage);
+  loginMode = "admin";
+  location.hash = "#environments";
+  for (const formId of adminForms) $(formId).reset();
+  for (const messageId of adminMessages) $(messageId).hidden = true;
+  $("admin-login-error").textContent = message;
+  $("admin-login-error").hidden = !message;
   showPage();
 }
 
 function showPage() {
-  if (!apiKey) return;
-  const admin = location.hash === "#admin";
-  $("dashboard-view").hidden = admin;
-  $("admin-view").hidden = !admin;
-  $("page-label").textContent = admin ? "Admin actions" : "Environments";
-  document.title = `${admin ? "Admin actions" : "Environments"} · EEM`;
+  const authenticated = isAdmin() || isCaller();
+  const panel = isAdmin() && location.hash === "#admin";
+  $("login-view").hidden = authenticated;
+  $("dashboard-view").hidden = !authenticated || panel;
+  $("admin-view").hidden = !panel;
+  $("admin-nav").hidden = !isAdmin();
+  $("mobile-admin-nav").hidden = !isAdmin();
+  $("account").hidden = !isCaller();
+  $("admin-account").hidden = !isAdmin();
+  $("admin-name").textContent = adminName || "—";
+  $("key-form").hidden = loginMode === "admin";
+  $("admin-login-form").hidden = loginMode !== "admin";
+  $("login-error").hidden = loginMode === "admin" || !$("login-error").textContent;
+  $("admin-login-error").hidden = loginMode !== "admin" || !$("admin-login-error").textContent;
+  $("login-description").textContent = loginMode === "admin"
+    ? "Use your admin username and password to access all environments."
+    : "Use your EEM API key to access your environments.";
+  for (const [id, selected] of [["caller-login-choice", loginMode !== "admin"], ["admin-login-choice", loginMode === "admin"]]) {
+    $(id).classList.toggle("active", selected);
+    $(id).setAttribute("aria-pressed", String(selected));
+  }
+  $("budget-panel").hidden = isAdmin();
+  $("dashboard-description").textContent = isAdmin()
+    ? "All environments across callers."
+    : "All environments associated with your account.";
+  $("list-heading").textContent = isAdmin() ? "All environments" : "Your environments";
+  $("list-description").textContent = isAdmin()
+    ? "Track environments across every caller."
+    : "Track the lifecycle of your temporary workspaces.";
+  $("admin-sign-out").hidden = !isAdmin();
+  for (const formId of adminForms) $(formId).hidden = !isAdmin();
+  $("page-label").textContent = panel ? "Admin actions" : "Environments";
+  document.title = `${panel ? "Admin actions" : "Environments"} · EEM`;
   for (const [id, selected] of [
-    ["environments-nav", !admin],
-    ["admin-nav", admin],
-    ["mobile-environments-nav", !admin],
-    ["mobile-admin-nav", admin],
+    ["environments-nav", !panel],
+    ["admin-nav", panel],
+    ["mobile-environments-nav", !panel],
+    ["mobile-admin-nav", panel],
   ]) {
     $(id).classList.toggle("active", selected);
     if (selected) $(id).setAttribute("aria-current", "page");
@@ -342,10 +391,9 @@ async function confirmDelete() {
     await loadEnvironments(currentPage);
   } catch (error) {
     if (error.status === 401) {
-      apiKey = "";
-      sessionStorage.removeItem(keyStorage);
       $("delete-dialog").close();
-      showLogin("Your API key is invalid or expired.");
+      if (isAdmin()) adminSignOut("Your admin session has expired. Sign in again.");
+      else showLogin("Your API key is invalid or expired.");
       return;
     }
     const errorMessage = $("delete-dialog-error");
@@ -401,7 +449,6 @@ function renderEnvironments(page) {
       environmentDetail("Created", readableDate(env.created_at)),
       environmentDetail("Expires", readableDate(env.expires_at)),
     );
-
     const actions = document.createElement("div");
     actions.className = "env-card-actions";
     if (env.endpoint && /^https?:\/\//i.test(env.endpoint)) {
@@ -430,7 +477,9 @@ function renderEnvironments(page) {
   $("list-status").hidden = page.environments.length > 0;
   $("list-status").className = "list-status";
   $("list-status").textContent = page.total === 0
-    ? "No environments yet. Environments created with this account will appear here."
+    ? isAdmin()
+      ? "No environments have been created yet."
+      : "No environments yet. Environments created with this account will appear here."
     : page.environments.length === 0
       ? `No ${$("status-filter").selectedOptions[0].textContent.toLowerCase()} environments.`
       : "";
@@ -450,18 +499,21 @@ async function loadEnvironments(requestedPage = 1) {
       page = await listEnvironments(Math.ceil(filteredTotal / page.limit));
     }
     renderEnvironments(page);
-    await Promise.all([loadBudget(), loadCapacity()]);
+    if (isCaller()) await Promise.all([loadBudget(), loadCapacity()]);
+    else await loadCapacity();
   } catch (error) {
     if (error.status === 401) {
-      sessionStorage.removeItem(keyStorage);
-      apiKey = "";
-      showLogin("Your API key is invalid or expired.");
+      if (isAdmin()) adminSignOut("Your admin session has expired. Sign in again.");
+      else showLogin("Your API key is invalid or expired.");
       return;
     }
     $("environment-grid").hidden = true;
     $("list-status").className = "list-status error";
     $("list-status").textContent =
-      `Could not load environments: ${error.message}`;
+      isAdmin() && error.status === 403
+        ? "This server does not allow admin environment listing yet."
+        : `Could not load environments: ${error.message}`;
+    if (isAdmin()) await loadCapacity();
   } finally {
     $("refresh").disabled = false;
   }
@@ -474,15 +526,21 @@ $("key-form").addEventListener("submit", async (event) => {
   const button = $("key-form").querySelector('button[type="submit"]');
   button.disabled = true;
   apiKey = value;
+  signedInAs = "caller";
   try {
     const page = await listEnvironments();
+    adminToken = "";
+    adminName = "";
+    sessionStorage.removeItem(adminTokenStorage);
+    sessionStorage.removeItem(adminNameStorage);
     sessionStorage.setItem(keyStorage, apiKey);
+    sessionStorage.setItem(roleStorage, signedInAs);
     $("api-key").value = "";
-    showDashboard();
+    location.hash = "#environments";
+    showPage();
     renderEnvironments(page);
     await Promise.all([loadBudget(), loadCapacity()]);
   } catch (error) {
-    apiKey = "";
     showLogin(
       error.status === 401
         ? "That API key is invalid or expired."
@@ -517,6 +575,35 @@ $("caller-form").addEventListener("submit", async (event) => {
   } finally {
     button.disabled = false;
     button.textContent = "Create caller";
+  }
+});
+
+$("admin-login-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("admin-login-form").querySelector('button[type="submit"]');
+  const username = $("admin-username").value.trim();
+  button.disabled = true;
+  $("admin-login-error").hidden = true;
+  try {
+    const session = await loginAdmin(username, $("admin-password").value);
+    adminToken = session.token;
+    adminName = username;
+    apiKey = "";
+    signedInAs = "admin";
+    sessionStorage.removeItem(keyStorage);
+    sessionStorage.setItem(adminTokenStorage, adminToken);
+    sessionStorage.setItem(adminNameStorage, adminName);
+    sessionStorage.setItem(roleStorage, signedInAs);
+    $("admin-login-form").reset();
+    location.hash = "#environments";
+    showPage();
+    await loadEnvironments();
+  } catch (error) {
+    $("admin-password").value = "";
+    $("admin-login-error").textContent = error.message;
+    $("admin-login-error").hidden = false;
+  } finally {
+    button.disabled = false;
   }
 });
 
@@ -582,6 +669,15 @@ $("toggle-key").addEventListener("click", () => {
   );
 });
 
+$("caller-login-choice").addEventListener("click", () => {
+  loginMode = "caller";
+  showPage();
+});
+$("admin-login-choice").addEventListener("click", () => {
+  loginMode = "admin";
+  showPage();
+});
+
 $("refresh").addEventListener("click", () => loadEnvironments(currentPage));
 $("status-filter").addEventListener("change", () => loadEnvironments());
 $("previous-page").addEventListener("click", () => loadEnvironments(currentPage - 1));
@@ -593,16 +689,14 @@ $("delete-dialog").addEventListener("cancel", (event) => {
   if ($("delete-confirm").disabled) event.preventDefault();
 });
 function signOut() {
-  apiKey = "";
-  sessionStorage.removeItem(keyStorage);
-  showLogin();
+  if (isAdmin()) adminSignOut();
+  else showLogin();
 }
 
 $("sign-out").addEventListener("click", signOut);
-$("admin-sign-out").addEventListener("click", signOut);
+$("admin-sign-out").addEventListener("click", () => adminSignOut());
 window.addEventListener("hashchange", showPage);
 
-if (apiKey) {
-  showDashboard();
-  loadEnvironments();
-}
+if (!location.hash || (!isAdmin() && location.hash === "#admin")) location.hash = "#environments";
+showPage();
+if (isAdmin() || isCaller()) loadEnvironments();
