@@ -113,7 +113,7 @@ func TestRefundDoesNotDeadlockWithCreate(t *testing.T) {
 		t.Fatalf("CreateCaller() error = %v", err)
 	}
 	e := newEnvironment(callerID)
-	e.ReservedCost = decimal.RequireFromString("2")
+	e.EstimatedCost = decimal.RequireFromString("2")
 	id, err := CreateEnvironment(ctx, pool, e)
 	if err != nil {
 		t.Fatalf("CreateEnvironment() error = %v", err)
@@ -161,7 +161,7 @@ func TestRefundDoesNotDeadlockWithCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LockCaller() error = %v", err)
 	}
-	if c.CostBudget.LessThanOrEqual(decimal.RequireFromString("10.345")) {
-		t.Errorf("balance = %s, want most of the 2 reserved refunded onto 10.345", c.CostBudget)
+	if c.CostUsed.GreaterThanOrEqual(decimal.RequireFromString("2")) {
+		t.Errorf("used = %s, want most of the 2 reserved refunded", c.CostUsed)
 	}
 }

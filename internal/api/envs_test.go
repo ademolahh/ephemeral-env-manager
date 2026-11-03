@@ -73,7 +73,7 @@ func (s server) apiKey(t *testing.T, permitted db.EnvType, quota provider.Resour
 		Role:            db.RoleUser,
 		PermittedEnv:    permitted,
 		Quota:           quota,
-		CostBudget:      decimal.RequireFromString("100"),
+		CostBudgetTotal: decimal.RequireFromString("100"),
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {
@@ -250,7 +250,7 @@ func TestCreateEnvUnauthorized(t *testing.T) {
 		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvRegularTesting,
 		Quota:           provider.Resources{CPUCore: 10},
-		CostBudget:      decimal.RequireFromString("100"),
+		CostBudgetTotal: decimal.RequireFromString("100"),
 		BudgetExpiresAt: time.Now().Add(time.Hour),
 	})
 	if err != nil {

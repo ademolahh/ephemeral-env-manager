@@ -14,8 +14,13 @@ CREATE TABLE environments (
     caller_id        uuid NOT NULL REFERENCES callers (id),
     failure_reason   text,
     template_name    text NOT NULL,
-    template_version text NOT NULL
+    template_version text NOT NULL,
+    idempotency_key  text,
+    estimated_cost   numeric NOT NULL CHECK (estimated_cost >= 0),
+    reserved_cost    numeric NOT NULL CHECK (reserved_cost BETWEEN 0 AND estimated_cost),
+    charged_cost     numeric CHECK (charged_cost BETWEEN 0 AND estimated_cost)
 );
 
 CREATE INDEX environments_caller_id_idx ON environments (caller_id);
 CREATE INDEX environments_status_idx on environments (status);
+CREATE UNIQUE INDEX environments_caller_idempotency_key_idx ON environments (caller_id, idempotency_key);

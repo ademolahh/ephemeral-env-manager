@@ -108,7 +108,7 @@ func TestSetBudget(t *testing.T) {
 
 	rec := s.putBudget(t, admin, target.String(), `{
 		"quota": {"cpu_core": 8, "ram_gb": 32, "disk_gb": 100},
-		"cost_budget": "25.50",
+		"cost_budget_total": "25.50",
 		"budget_expires_at": "`+expires+`"
 	}`)
 
@@ -126,8 +126,8 @@ func TestSetBudget(t *testing.T) {
 	if want := (provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100}); limits.Quota != want {
 		t.Errorf("quota = %+v, want %+v", limits.Quota, want)
 	}
-	if !limits.CostBudget.Equal(decimal.RequireFromString("25.50")) {
-		t.Errorf("cost_budget = %s, want 25.50", limits.CostBudget)
+	if !limits.CostBudgetTotal.Equal(decimal.RequireFromString("25.50")) {
+		t.Errorf("cost_budget_total = %s, want 25.50", limits.CostBudgetTotal)
 	}
 	var storedExpiry, now time.Time
 	if err := s.tx.QueryRow(ctx, `SELECT budget_expires_at, now() FROM callers WHERE id = $1`, target).Scan(&storedExpiry, &now); err != nil {
@@ -145,7 +145,7 @@ func TestSetBudgetForbidden(t *testing.T) {
 	s := newServer(t)
 	target, user := s.callerWithRole(t, db.RoleUser)
 	_, agent := s.callerWithRole(t, db.RoleAgent)
-	body := `{"quota": {"cpu_core": 999, "ram_gb": 999, "disk_gb": 999}, "cost_budget": "999", "budget_expires_at": "` + futureRFC3339() + `"}`
+	body := `{"quota": {"cpu_core": 999, "ram_gb": 999, "disk_gb": 999}, "cost_budget_total": "999", "budget_expires_at": "` + futureRFC3339() + `"}`
 
 	for name, key := range map[string]string{"user on own budget": user, "agent": agent} {
 		if rec := s.putBudget(t, key, target.String(), body); rec.Code != http.StatusForbidden {
@@ -180,16 +180,16 @@ func TestSetBudgetRejected(t *testing.T) {
 		want string
 	}{
 		{name: "invalid id", id: "nope", body: `{}`, code: http.StatusBadRequest, want: "invalid caller id"},
-		{name: "unknown caller", id: uuid.NewString(), body: `{"quota": {}, "cost_budget": "1", "budget_expires_at": "` + future + `"}`, code: http.StatusNotFound, want: "caller not found"},
+		{name: "unknown caller", id: uuid.NewString(), body: `{"quota": {}, "cost_budget_total": "1", "budget_expires_at": "` + future + `"}`, code: http.StatusNotFound, want: "caller not found"},
 		{name: "malformed json", id: target.String(), body: `{`, code: http.StatusBadRequest, want: "invalid request body"},
 		{name: "unknown field", id: target.String(), body: `{"budget": "1"}`, code: http.StatusBadRequest, want: "unknown field"},
-		{name: "missing quota", id: target.String(), body: `{"cost_budget": "1", "budget_expires_at": "` + future + `"}`, code: http.StatusBadRequest, want: "required"},
+		{name: "missing quota", id: target.String(), body: `{"cost_budget_total": "1", "budget_expires_at": "` + future + `"}`, code: http.StatusBadRequest, want: "required"},
 		{name: "missing cost budget", id: target.String(), body: `{"quota": {}, "budget_expires_at": "` + future + `"}`, code: http.StatusBadRequest, want: "required"},
-		{name: "missing expiry", id: target.String(), body: `{"quota": {}, "cost_budget": "1"}`, code: http.StatusBadRequest, want: "required"},
-		{name: "negative quota", id: target.String(), body: `{"quota": {"ram_gb": -1}, "cost_budget": "1", "budget_expires_at": "` + future + `"}`, code: http.StatusBadRequest, want: "quota must not be negative"},
-		{name: "negative budget", id: target.String(), body: `{"quota": {}, "cost_budget": "-0.01", "budget_expires_at": "` + future + `"}`, code: http.StatusBadRequest, want: "cost_budget must not be negative"},
-		{name: "expiry in the past", id: target.String(), body: `{"quota": {}, "cost_budget": "1", "budget_expires_at": "` + past + `"}`, code: http.StatusBadRequest, want: "in the future"},
-		{name: "expiry not a timestamp", id: target.String(), body: `{"quota": {}, "cost_budget": "1", "budget_expires_at": "tomorrow"}`, code: http.StatusBadRequest, want: "invalid request body"},
+		{name: "missing expiry", id: target.String(), body: `{"quota": {}, "cost_budget_total": "1"}`, code: http.StatusBadRequest, want: "required"},
+		{name: "negative quota", id: target.String(), body: `{"quota": {"ram_gb": -1}, "cost_budget_total": "1", "budget_expires_at": "` + future + `"}`, code: http.StatusBadRequest, want: "quota must not be negative"},
+		{name: "negative budget", id: target.String(), body: `{"quota": {}, "cost_budget_total": "-0.01", "budget_expires_at": "` + future + `"}`, code: http.StatusBadRequest, want: "cost_budget_total must not be negative"},
+		{name: "expiry in the past", id: target.String(), body: `{"quota": {}, "cost_budget_total": "1", "budget_expires_at": "` + past + `"}`, code: http.StatusBadRequest, want: "in the future"},
+		{name: "expiry not a timestamp", id: target.String(), body: `{"quota": {}, "cost_budget_total": "1", "budget_expires_at": "tomorrow"}`, code: http.StatusBadRequest, want: "invalid request body"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -206,12 +206,37 @@ func TestSetBudgetZeroQuotaBlocksNewEnvironments(t *testing.T) {
 	_, admin := s.callerWithRole(t, db.RoleAdmin)
 	target, key := s.callerWithRole(t, db.RoleUser)
 
-	rec := s.putBudget(t, admin, target.String(), `{"quota": {}, "cost_budget": "0", "budget_expires_at": "`+futureRFC3339()+`"}`)
+	rec := s.putBudget(t, admin, target.String(), `{"quota": {}, "cost_budget_total": "0", "budget_expires_at": "`+futureRFC3339()+`"}`)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("set budget status = %d, want %d; body %s", rec.Code, http.StatusNoContent, rec.Body)
 	}
 
 	if rec := s.post(t, key, validBody, nil); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "quota exceeded") {
 		t.Errorf("create after zero quota = %d %s, want 403 quota exceeded", rec.Code, rec.Body)
+	}
+}
+
+func TestGetBudgetShowsProdBugUsage(t *testing.T) {
+	s := newServer(t)
+	_, key := s.callerWithRole(t, db.RoleUser)
+	rec := s.post(t, key, withBody(t, func(m map[string]any) { m["type"] = "PROD_BUG" }), nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want 202; body %s", rec.Code, rec.Body)
+	}
+	created := decodeEnv(t, rec)
+
+	rec = s.getBudget(t, key, "me")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body)
+	}
+	var got budgetResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode budget: %v", err)
+	}
+	if want := created.HourlyRate.Mul(decimal.NewFromInt(4)); !got.ProdBugCostUsed.Equal(want) {
+		t.Errorf("prod bug cost used = %s, want %s", got.ProdBugCostUsed, want)
+	}
+	if !got.CostUsed.IsZero() || !got.CostRemaining.Equal(got.CostBudget) {
+		t.Errorf("cost used, remaining = %s, %s, want 0 and the full budget (PROD_BUG is exempt)", got.CostUsed, got.CostRemaining)
 	}
 }

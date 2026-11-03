@@ -28,8 +28,8 @@ func TestLockCaller(t *testing.T) {
 	if got.Quota != c.Quota {
 		t.Errorf("Quota = %+v, want %+v", got.Quota, c.Quota)
 	}
-	if !got.CostBudget.Equal(c.CostBudget) {
-		t.Errorf("CostBudget = %s, want %s", got.CostBudget, c.CostBudget)
+	if !got.CostBudgetTotal.Equal(c.CostBudgetTotal) || !got.CostUsed.IsZero() {
+		t.Errorf("total, used = %s, %s, want %s, 0", got.CostBudgetTotal, got.CostUsed, c.CostBudgetTotal)
 	}
 	if got.BudgetExpired {
 		t.Error("BudgetExpired = true, want false")
@@ -93,51 +93,6 @@ func TestCallerUsage(t *testing.T) {
 	}
 	if want := (provider.Resources{CPUCore: 2, RAMGB: 4, DiskGB: 6}); usage != want {
 		t.Errorf("CallerUsage() = %+v, want %+v", usage, want)
-	}
-}
-
-func TestCallerSpend(t *testing.T) {
-	tx := testTx(t)
-	ctx := context.Background()
-	callerID := createTestCaller(t, tx, newCaller())
-	since := txNow(t, tx)
-
-	spend, err := CallerSpend(ctx, tx, callerID, since)
-	if err != nil {
-		t.Fatalf("CallerSpend() error = %v", err)
-	}
-	if !spend.IsZero() {
-		t.Errorf("CallerSpend() with no envs = %s, want 0", spend)
-	}
-
-	e := newEnvironment(callerID)
-	e.ReservedCost = decimal.RequireFromString("3")
-	createTestEnvironment(t, tx, e)
-
-	refund := func(id uuid.UUID, amount string) {
-		t.Helper()
-		if _, err := tx.Exec(ctx, `UPDATE environments SET refunded_cost = $2 WHERE id = $1`, id, amount); err != nil {
-			t.Fatalf("set refund: %v", err)
-		}
-	}
-	refund(createTestEnvironment(t, tx, e), "2.25")
-	refund(createTestEnvironment(t, tx, e), "3")
-
-	prodBug := newEnvironment(callerID)
-	prodBug.Type = EnvProdBug
-	createTestEnvironment(t, tx, prodBug)
-
-	before := createTestEnvironment(t, tx, e)
-	if _, err := tx.Exec(ctx, `UPDATE environments SET created_at = created_at - interval '1 day' WHERE id = $1`, before); err != nil {
-		t.Fatalf("backdate env: %v", err)
-	}
-
-	spend, err = CallerSpend(ctx, tx, callerID, since)
-	if err != nil {
-		t.Fatalf("CallerSpend() error = %v", err)
-	}
-	if want := decimal.RequireFromString("3.75"); !spend.Equal(want) {
-		t.Errorf("CallerSpend() = %s, want %s (3 still reserved, 0.75 kept after a partial refund)", spend, want)
 	}
 }
 
@@ -367,15 +322,16 @@ func TestStatusChangeRefundsUnusedBudget(t *testing.T) {
 		name   string
 		from   EnvStatus
 		mark   func(ctx context.Context, q DBTX, id uuid.UUID) error
+		to     EnvStatus
 		age    time.Duration
 		refund string
 	}{
-		{name: "failed after 30m of a 2h ttl", from: EnvRunning, mark: failed, age: 30 * time.Minute, refund: "2.25"},
-		{name: "failed immediately", from: EnvProvisioning, mark: failed, refund: "3"},
-		{name: "deleted after 30m of a 2h ttl", from: EnvDeleting, mark: MarkEnvironmentDeleted, age: 30 * time.Minute, refund: "2.25"},
-		{name: "deleted after the ttl ran out", from: EnvDeleting, mark: MarkEnvironmentDeleted, age: 3 * time.Hour, refund: "0"},
-		{name: "deleting does not refund yet", from: EnvRunning, mark: MarkEnvironmentDeleting, age: 30 * time.Minute, refund: "0"},
-		{name: "running does not refund", from: EnvProvisioning, mark: MarkEnvironmentRunning, refund: "0"},
+		{name: "failed after 30m of a 2h ttl", from: EnvRunning, mark: failed, to: EnvFailed, age: 30 * time.Minute, refund: "2.25"},
+		{name: "failed immediately", from: EnvProvisioning, mark: failed, to: EnvFailed, refund: "3"},
+		{name: "deleted after 30m of a 2h ttl", from: EnvDeleting, mark: MarkEnvironmentDeleted, to: EnvDeleted, age: 30 * time.Minute, refund: "2.25"},
+		{name: "deleted after the ttl ran out", from: EnvDeleting, mark: MarkEnvironmentDeleted, to: EnvDeleted, age: 3 * time.Hour, refund: "0"},
+		{name: "deleting does not refund yet", from: EnvRunning, mark: MarkEnvironmentDeleting, to: EnvDeleting, age: 30 * time.Minute, refund: "0"},
+		{name: "running does not refund", from: EnvProvisioning, mark: MarkEnvironmentRunning, to: EnvRunning, refund: "0"},
 	}
 
 	for _, tt := range tests {
@@ -386,19 +342,19 @@ func TestStatusChangeRefundsUnusedBudget(t *testing.T) {
 			e := newEnvironment(callerID)
 			e.HourlyRate = decimal.RequireFromString("1.5")
 			e.TTL = 2 * time.Hour
-			e.ReservedCost = decimal.RequireFromString("3")
+			e.EstimatedCost = decimal.RequireFromString("3")
 			id := createTestEnvironment(t, tx, e)
 
-			balance := func() decimal.Decimal {
+			used := func() decimal.Decimal {
 				t.Helper()
 				c, err := LockCaller(ctx, tx, callerID)
 				if err != nil {
 					t.Fatalf("LockCaller() error = %v", err)
 				}
-				return c.CostBudget
+				return c.CostUsed
 			}
-			if got, want := balance(), decimal.RequireFromString("9.345"); !got.Equal(want) {
-				t.Fatalf("balance after create = %s, want %s (12.345 - 3 reserved)", got, want)
+			if got, want := used(), decimal.RequireFromString("3"); !got.Equal(want) {
+				t.Fatalf("used after create = %s, want %s reserved", got, want)
 			}
 
 			if _, err := tx.Exec(ctx, `
@@ -415,15 +371,19 @@ func TestStatusChangeRefundsUnusedBudget(t *testing.T) {
 			}
 
 			refund := decimal.RequireFromString(tt.refund)
-			if got, want := balance(), decimal.RequireFromString("9.345").Add(refund); !got.Equal(want) {
-				t.Errorf("balance = %s, want %s (refund %s)", got, want, refund)
+			if got, want := used(), decimal.RequireFromString("3").Sub(refund); !got.Equal(want) {
+				t.Errorf("used = %s, want %s (refund %s)", got, want, refund)
 			}
-			var refunded decimal.Decimal
-			if err := tx.QueryRow(ctx, `SELECT refunded_cost FROM environments WHERE id = $1`, id).Scan(&refunded); err != nil {
-				t.Fatalf("read refunded_cost: %v", err)
+			var charged *decimal.Decimal
+			if err := tx.QueryRow(ctx, `SELECT charged_cost FROM environments WHERE id = $1`, id).Scan(&charged); err != nil {
+				t.Fatalf("read charged_cost: %v", err)
 			}
-			if !refunded.Equal(refund) {
-				t.Errorf("refunded_cost = %s, want %s", refunded, refund)
+			settles := tt.to == EnvFailed || tt.to == EnvDeleted
+			switch {
+			case !settles && charged != nil:
+				t.Errorf("charged_cost = %s, want NULL until the env ends", charged)
+			case settles && (charged == nil || !charged.Equal(decimal.RequireFromString("3").Sub(refund))):
+				t.Errorf("charged_cost = %v, want %s", charged, decimal.RequireFromString("3").Sub(refund))
 			}
 		})
 	}
@@ -434,7 +394,7 @@ func TestRejectedStatusChangeDoesNotRefund(t *testing.T) {
 	ctx := context.Background()
 	callerID := createTestCaller(t, tx, newCaller())
 	e := newEnvironment(callerID)
-	e.ReservedCost = decimal.RequireFromString("3")
+	e.EstimatedCost = decimal.RequireFromString("3")
 	id := createTestEnvironment(t, tx, e)
 	forceStatus(t, tx, id, EnvFailed)
 
@@ -445,7 +405,121 @@ func TestRejectedStatusChangeDoesNotRefund(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LockCaller() error = %v", err)
 	}
-	if want := decimal.RequireFromString("9.345"); !c.CostBudget.Equal(want) {
-		t.Errorf("balance = %s, want %s", c.CostBudget, want)
+	if want := decimal.RequireFromString("3"); !c.CostUsed.Equal(want) {
+		t.Errorf("used = %s, want %s", c.CostUsed, want)
+	}
+}
+
+func TestCallerBudgetTotalAndRemaining(t *testing.T) {
+	tx := testTx(t)
+	ctx := context.Background()
+	callerID := createTestCaller(t, tx, newCaller())
+	e := newEnvironment(callerID)
+	e.EstimatedCost = decimal.RequireFromString("3")
+	createTestEnvironment(t, tx, e)
+
+	b, err := GetCallerBudget(ctx, tx, callerID)
+	if err != nil {
+		t.Fatalf("GetCallerBudget() error = %v", err)
+	}
+	if !b.CostBudgetTotal.Equal(decimal.RequireFromString("12.345")) || !b.CostUsed.Equal(decimal.RequireFromString("3")) {
+		t.Errorf("total, used = %s, %s, want 12.345, 3", b.CostBudgetTotal, b.CostUsed)
+	}
+
+	if err := SetCallerBudget(ctx, tx, callerID, provider.Resources{}, decimal.RequireFromString("20"), time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SetCallerBudget() error = %v", err)
+	}
+	if b, err = GetCallerBudget(ctx, tx, callerID); err != nil {
+		t.Fatalf("GetCallerBudget() error = %v", err)
+	}
+	if !b.CostBudgetTotal.Equal(decimal.RequireFromString("20")) || !b.CostUsed.Equal(decimal.RequireFromString("3")) {
+		t.Errorf("after set: total, used = %s, %s, want 20, 3 (update leaves usage alone)", b.CostBudgetTotal, b.CostUsed)
+	}
+}
+
+func TestSetBudgetBelowCurrentUsage(t *testing.T) {
+	tx := testTx(t)
+	ctx := context.Background()
+	callerID := createTestCaller(t, tx, newCaller())
+	e := newEnvironment(callerID)
+	e.EstimatedCost = decimal.RequireFromString("3")
+	id := createTestEnvironment(t, tx, e)
+
+	if err := SetCallerBudget(ctx, tx, callerID, provider.Resources{}, decimal.RequireFromString("2"), time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SetCallerBudget() error = %v", err)
+	}
+	b, err := GetCallerBudget(ctx, tx, callerID)
+	if err != nil {
+		t.Fatalf("GetCallerBudget() error = %v", err)
+	}
+	if !b.CostUsed.Equal(decimal.RequireFromString("3")) || !b.CostBudgetTotal.Equal(decimal.RequireFromString("2")) {
+		t.Errorf("total, used = %s, %s, want 2, 3 (usage can exceed a lowered total)", b.CostBudgetTotal, b.CostUsed)
+	}
+
+	if err := MarkEnvironmentFailed(ctx, tx, id, "boom"); err != nil {
+		t.Fatalf("MarkEnvironmentFailed() error = %v", err)
+	}
+	if b, err = GetCallerBudget(ctx, tx, callerID); err != nil {
+		t.Fatalf("GetCallerBudget() error = %v", err)
+	}
+	if !b.CostUsed.IsZero() {
+		t.Errorf("used = %s, want 0 after an immediate failure", b.CostUsed)
+	}
+}
+
+func TestProdBugCostTracked(t *testing.T) {
+	tx := testTx(t)
+	ctx := context.Background()
+	callerID := createTestCaller(t, tx, newCaller())
+	e := newEnvironment(callerID)
+	e.Type = EnvProdBug
+	e.HourlyRate = decimal.RequireFromString("1.5")
+	e.TTL = 2 * time.Hour
+	e.EstimatedCost = decimal.RequireFromString("3")
+	id := createTestEnvironment(t, tx, e)
+
+	budget := func() CallerBudget {
+		t.Helper()
+		b, err := GetCallerBudget(ctx, tx, callerID)
+		if err != nil {
+			t.Fatalf("GetCallerBudget() error = %v", err)
+		}
+		return b
+	}
+	if b := budget(); !b.ProdBugCost.Equal(decimal.RequireFromString("3")) || !b.CostUsed.IsZero() {
+		t.Errorf("after create: prod bug cost, used = %s, %s, want 3, 0 (budget untouched)", b.ProdBugCost, b.CostUsed)
+	}
+	var estimated, reserved decimal.Decimal
+	if err := tx.QueryRow(ctx, `SELECT estimated_cost, reserved_cost FROM environments WHERE id = $1`, id).Scan(&estimated, &reserved); err != nil {
+		t.Fatalf("read costs: %v", err)
+	}
+	if !estimated.Equal(decimal.RequireFromString("3")) || !reserved.IsZero() {
+		t.Errorf("estimated, reserved = %s, %s, want 3 recorded and 0 reserved", estimated, reserved)
+	}
+
+	if err := SetCallerBudget(ctx, tx, callerID, provider.Resources{}, decimal.RequireFromString("20"), time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SetCallerBudget() error = %v", err)
+	}
+	if b := budget(); !b.ProdBugCost.Equal(decimal.RequireFromString("3")) || !b.CostBudgetTotal.Equal(decimal.RequireFromString("20")) {
+		t.Errorf("after update: prod bug cost, total = %s, %s, want 3 unchanged, 20", b.ProdBugCost, b.CostBudgetTotal)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE environments SET created_at = created_at - interval '30 minutes', expires_at = expires_at - interval '30 minutes'
+		WHERE id = $1`, id); err != nil {
+		t.Fatalf("age env: %v", err)
+	}
+	if err := MarkEnvironmentFailed(ctx, tx, id, "boom"); err != nil {
+		t.Fatalf("MarkEnvironmentFailed() error = %v", err)
+	}
+	if b := budget(); !b.ProdBugCost.Equal(decimal.RequireFromString("0.75")) || !b.CostUsed.IsZero() {
+		t.Errorf("after failure: prod bug cost, used = %s, %s, want 0.75 for 30m used, 0", b.ProdBugCost, b.CostUsed)
+	}
+	var charged decimal.Decimal
+	if err := tx.QueryRow(ctx, `SELECT charged_cost FROM environments WHERE id = $1`, id).Scan(&charged); err != nil {
+		t.Fatalf("read charged_cost: %v", err)
+	}
+	if !charged.Equal(decimal.RequireFromString("0.75")) {
+		t.Errorf("charged_cost = %s, want 0.75", charged)
 	}
 }

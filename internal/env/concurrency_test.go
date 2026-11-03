@@ -76,7 +76,7 @@ func seedCaller(t *testing.T, pool *pgxpool.Pool, quota provider.Resources, budg
 		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvRegularTesting,
 		Quota:           quota,
-		CostBudget:      decimal.RequireFromString(budget),
+		CostBudgetTotal: decimal.RequireFromString(budget),
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {

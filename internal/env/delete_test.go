@@ -40,7 +40,7 @@ func otherCaller(t *testing.T, q db.DBTX, role db.Role) db.AuthenticatedCaller {
 		Role:            role,
 		PermittedEnv:    db.EnvProdBug,
 		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
-		CostBudget:      decimal.RequireFromString("10"),
+		CostBudgetTotal: decimal.RequireFromString("10"),
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {

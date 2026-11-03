@@ -20,7 +20,7 @@ type callerRow struct {
 	Role            string
 	PermittedEnv    string
 	Quota           provider.Resources
-	CostBudget      string
+	CostBudgetTotal string
 	BudgetExpiresAt time.Time
 	BudgetSetAt     time.Time
 }
@@ -31,12 +31,12 @@ func getCaller(t *testing.T, tx pgx.Tx, id uuid.UUID) callerRow {
 	err := tx.QueryRow(context.Background(), `
 		SELECT github_login, github_id, role::text, permitted_env::text,
 			quota_cpu_cores, quota_ram_gb, quota_disk_gb,
-			cost_budget::text, budget_expires_at, budget_set_at
+			cost_budget_total::text, budget_expires_at, budget_set_at
 		FROM callers WHERE id = $1`, id,
 	).Scan(
 		&r.GithubLogin, &r.GithubID, &r.Role, &r.PermittedEnv,
 		&r.Quota.CPUCore, &r.Quota.RAMGB, &r.Quota.DiskGB,
-		&r.CostBudget, &r.BudgetExpiresAt, &r.BudgetSetAt,
+		&r.CostBudgetTotal, &r.BudgetExpiresAt, &r.BudgetSetAt,
 	)
 	if err != nil {
 		t.Fatalf("get caller %s: %v", id, err)
@@ -51,7 +51,7 @@ func newCaller() NewCaller {
 		Role:            RoleUser,
 		PermittedEnv:    EnvPRReview,
 		Quota:           provider.Resources{CPUCore: 4, RAMGB: 16, DiskGB: 50},
-		CostBudget:      decimal.RequireFromString("12.345"),
+		CostBudgetTotal: decimal.RequireFromString("12.345"),
 		BudgetExpiresAt: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
 }
@@ -84,8 +84,8 @@ func TestCreateCaller(t *testing.T) {
 	if got.Quota != c.Quota {
 		t.Errorf("quota = %+v, want %+v", got.Quota, c.Quota)
 	}
-	if got.CostBudget != c.CostBudget.String() {
-		t.Errorf("cost_budget = %s, want %s", got.CostBudget, c.CostBudget)
+	if got.CostBudgetTotal != c.CostBudgetTotal.String() {
+		t.Errorf("cost_budget_total = %s, want %s", got.CostBudgetTotal, c.CostBudgetTotal)
 	}
 	if !got.BudgetExpiresAt.Equal(c.BudgetExpiresAt) {
 		t.Errorf("budget_expires_at = %v, want %v", got.BudgetExpiresAt, c.BudgetExpiresAt)
@@ -140,7 +140,7 @@ func TestCreateCallerErrors(t *testing.T) {
 		},
 		{
 			name:   "negative cost budget",
-			mutate: func(c *NewCaller) { c.CostBudget = decimal.RequireFromString("-0.01") },
+			mutate: func(c *NewCaller) { c.CostBudgetTotal = decimal.RequireFromString("-0.01") },
 			code:   "23514",
 		},
 		{
@@ -215,8 +215,8 @@ func TestSetCallerBudget(t *testing.T) {
 	if got.Quota != quota {
 		t.Errorf("quota = %+v, want %+v", got.Quota, quota)
 	}
-	if got.CostBudget != budget.String() {
-		t.Errorf("cost_budget = %s, want %s", got.CostBudget, budget)
+	if got.CostBudgetTotal != budget.String() {
+		t.Errorf("cost_budget_total = %s, want %s", got.CostBudgetTotal, budget)
 	}
 	if !got.BudgetExpiresAt.Equal(expires) {
 		t.Errorf("budget_expires_at = %v, want %v", got.BudgetExpiresAt, expires)

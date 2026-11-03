@@ -28,7 +28,7 @@ func (s server) callerWithRole(t *testing.T, role db.Role) (uuid.UUID, string) {
 		Role:            role,
 		PermittedEnv:    db.EnvProdBug,
 		Quota:           provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50},
-		CostBudget:      decimal.RequireFromString("100"),
+		CostBudgetTotal: decimal.RequireFromString("100"),
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {

@@ -63,7 +63,7 @@ func main() {
 				Role:            db.RoleAdmin,
 				PermittedEnv:    db.EnvProdBug,
 				Quota:           quota,
-				CostBudget:      budget,
+				CostBudgetTotal: budget,
 				BudgetExpiresAt: expiresAt,
 			})
 			if err != nil {

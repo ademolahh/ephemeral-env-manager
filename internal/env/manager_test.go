@@ -107,7 +107,7 @@ func setup(t *testing.T) (pgx.Tx, uuid.UUID) {
 		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvRegularTesting,
 		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
-		CostBudget:      decimal.RequireFromString("10"),
+		CostBudgetTotal: decimal.RequireFromString("10"),
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {
@@ -415,7 +415,7 @@ func TestCreateIdempotencyKeyPerCaller(t *testing.T) {
 		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvRegularTesting,
 		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
-		CostBudget:      decimal.RequireFromString("10"),
+		CostBudgetTotal: decimal.RequireFromString("10"),
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {

@@ -66,7 +66,7 @@ func newFixture(t *testing.T, q db.DBTX) fixture {
 		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvProdBug,
 		Quota:           provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000},
-		CostBudget:      decimal.RequireFromString("100"),
+		CostBudgetTotal: decimal.RequireFromString("100"),
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {

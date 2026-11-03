@@ -46,7 +46,7 @@ type NewEnvironment struct {
 	TemplateName    string
 	TemplateVersion string
 	IdempotencyKey  *string
-	ReservedCost    decimal.Decimal
+	EstimatedCost   decimal.Decimal
 }
 
 const environmentColumns = `
@@ -76,20 +76,26 @@ func CreateEnvironment(ctx context.Context, q DBTX, e NewEnvironment) (uuid.UUID
 		INSERT INTO environments (
 			id, expires_at, type, provider,
 			cpu_cores, ram_gb, disk_gb, hourly_rate,
-			caller_id, template_name, template_version, idempotency_key, reserved_cost
+			caller_id, template_name, template_version, idempotency_key,
+			estimated_cost, reserved_cost
 		)
-		VALUES ($1, now() + make_interval(secs => $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		VALUES ($1, now() + make_interval(secs => $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+			$13::numeric, CASE WHEN $3::env_type = 'PROD_BUG' THEN 0 ELSE $13::numeric END)`,
 		id, e.TTL.Seconds(), e.Type, e.Provider,
 		e.Resources.CPUCore, e.Resources.RAMGB, e.Resources.DiskGB, e.HourlyRate,
-		e.CallerID, e.TemplateName, e.TemplateVersion, e.IdempotencyKey, e.ReservedCost,
+		e.CallerID, e.TemplateName, e.TemplateVersion, e.IdempotencyKey, e.EstimatedCost,
 	)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("create environment: %w", err)
 	}
 
-	_, err = tx.Exec(ctx, `UPDATE callers SET cost_budget = cost_budget - $2 WHERE id = $1`, e.CallerID, e.ReservedCost)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("create environment: reduce caller budget: %w", err)
+	charge := `UPDATE callers SET cost_used = cost_used + $2 WHERE id = $1`
+	if e.Type == EnvProdBug {
+		charge = `UPDATE callers SET prod_bug_cost = prod_bug_cost + $2 WHERE id = $1`
+	}
+
+	if _, err := tx.Exec(ctx, charge, e.CallerID, e.EstimatedCost); err != nil {
+		return uuid.Nil, fmt.Errorf("create environment: charge caller: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -184,13 +190,17 @@ func updateStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reaso
 				status         = $2::env_status,
 				failure_reason = COALESCE($3, failure_reason),
 				deleted_at     = CASE WHEN $2::env_status = 'DELETED' THEN now() ELSE deleted_at END,
-				refunded_cost  = CASE WHEN $6 THEN LEAST(reserved_cost, GREATEST(0, reserved_cost
-					- hourly_rate * GREATEST(0, extract(epoch FROM LEAST(now(), expires_at) - created_at)) / 3600))
-					ELSE refunded_cost END
+				charged_cost   = CASE WHEN $6 THEN LEAST(estimated_cost,
+					hourly_rate * GREATEST(0, extract(epoch FROM LEAST(now(), expires_at) - created_at)) / 3600)
+					ELSE charged_cost END
 			WHERE id = $1 AND status::text = ANY($4)
-			RETURNING provider, cpu_cores, ram_gb, disk_gb, caller_id, refunded_cost
-		), refunded AS (
-			UPDATE callers c SET cost_budget = c.cost_budget + env.refunded_cost
+			RETURNING provider, cpu_cores, ram_gb, disk_gb, caller_id, type, estimated_cost, reserved_cost, charged_cost
+		), settled AS (
+			UPDATE callers c SET
+				cost_used     = GREATEST(0, c.cost_used - GREATEST(0, env.reserved_cost - env.charged_cost)),
+				prod_bug_cost = CASE WHEN env.type = 'PROD_BUG'
+					THEN GREATEST(0, c.prod_bug_cost - (env.estimated_cost - env.charged_cost))
+					ELSE c.prod_bug_cost END
 			FROM env
 			WHERE $6 AND c.id = env.caller_id
 		), released AS (
@@ -292,20 +302,4 @@ func CallerUsage(ctx context.Context, q DBTX, callerID uuid.UUID) (provider.Reso
 	}
 
 	return r, nil
-}
-
-func CallerSpend(ctx context.Context, q DBTX, callerID uuid.UUID, since time.Time) (decimal.Decimal, error) {
-	var spend decimal.Decimal
-	err := q.QueryRow(ctx, `
-		SELECT COALESCE(sum(reserved_cost - refunded_cost), 0)
-		FROM environments
-		WHERE caller_id = $1 AND created_at >= $2`,
-		callerID, since,
-	).Scan(&spend)
-
-	if err != nil {
-		return decimal.Decimal{}, fmt.Errorf("caller spend %s: %w", callerID, err)
-	}
-
-	return spend, nil
 }

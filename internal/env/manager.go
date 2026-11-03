@@ -284,16 +284,15 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, req CreateRequest
 		return reservation{}, err
 	}
 
-	var cost decimal.Decimal
 	rate := req.Template.HourlyCost(prices)
+	cost := estimatedCost(rate, req.Template.TTL)
 	if req.Type != db.EnvProdBug {
 		if caller.BudgetExpired {
 			return reservation{}, ErrBudgetExpired
 		}
 
-		cost = estimatedCost(rate, req.Template.TTL)
-		if cost.GreaterThan(caller.CostBudget) {
-			return reservation{}, fmt.Errorf("estimated %s, remaining budget %s: %w", cost, caller.CostBudget, ErrBudgetExceeded)
+		if caller.CostUsed.Add(cost).GreaterThan(caller.CostBudgetTotal) {
+			return reservation{}, fmt.Errorf("used %s, estimated %s, budget %s: %w", caller.CostUsed, cost, caller.CostBudgetTotal, ErrBudgetExceeded)
 		}
 	}
 
@@ -312,7 +311,7 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, req CreateRequest
 		TemplateName:    req.Template.Name,
 		TemplateVersion: req.Template.Version,
 		IdempotencyKey:  key,
-		ReservedCost:    cost,
+		EstimatedCost:   cost,
 	})
 	if err != nil {
 		return reservation{}, err
@@ -406,6 +405,8 @@ func lowerPriority(t db.EnvType) []db.EnvType {
 	return lower
 }
 
+// estimatedCost = hourly_rate × ttl_seconds / 3600
+// where hourly_rate = cpu_core × cpu_price + ram_gb × ram_price + disk_gb × disk_price
 func estimatedCost(rate decimal.Decimal, ttl time.Duration) decimal.Decimal {
 	return rate.Mul(decimal.NewFromInt(int64(ttl / time.Second))).Div(decimal.NewFromInt(3600))
 }

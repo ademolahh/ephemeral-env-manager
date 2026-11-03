@@ -15,7 +15,7 @@ import (
 
 type setBudgetRequest struct {
 	Quota           *provider.Resources `json:"quota"`
-	CostBudget      *decimal.Decimal    `json:"cost_budget"`
+	CostBudgetTotal *decimal.Decimal    `json:"cost_budget_total"`
 	BudgetExpiresAt *time.Time          `json:"budget_expires_at"`
 }
 
@@ -25,6 +25,7 @@ type budgetResponse struct {
 	CostBudget      decimal.Decimal    `json:"cost_budget"`
 	CostUsed        decimal.Decimal    `json:"cost_used"`
 	CostRemaining   decimal.Decimal    `json:"cost_remaining"`
+	ProdBugCostUsed decimal.Decimal    `json:"prod_bug_cost_used"`
 	BudgetExpiresAt time.Time          `json:"budget_expires_at"`
 	Quota           provider.Resources `json:"quota"`
 	ResourcesUsed   provider.Resources `json:"resources_used"`
@@ -51,12 +52,6 @@ func (h *Handler) GetBudget(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, "get budget", err)
 		return
 	}
-	used, err := db.CallerSpend(r.Context(), h.db, id, budget.BudgetSetAt)
-	if err != nil {
-		writeServiceError(w, "get cost usage", err)
-		return
-	}
-
 	resourcesUsed, err := db.CallerUsage(r.Context(), h.db, id)
 	if err != nil {
 		writeServiceError(w, "get resource usage", err)
@@ -66,9 +61,10 @@ func (h *Handler) GetBudget(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, budgetResponse{
 		CallerID:        id,
 		Currency:        "USD",
-		CostBudget:      budget.CostBudget.Add(used),
-		CostUsed:        used,
-		CostRemaining:   budget.CostBudget,
+		CostBudget:      budget.CostBudgetTotal,
+		CostUsed:        budget.CostUsed,
+		CostRemaining:   decimal.Max(decimal.Zero, budget.CostBudgetTotal.Sub(budget.CostUsed)),
+		ProdBugCostUsed: budget.ProdBugCost,
 		BudgetExpiresAt: budget.BudgetExpiresAt,
 		Quota:           budget.Quota,
 		ResourcesUsed:   resourcesUsed,
@@ -100,7 +96,7 @@ func (h *Handler) SetBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.SetCallerBudget(r.Context(), h.db, id, *req.Quota, *req.CostBudget, *req.BudgetExpiresAt); err != nil {
+	if err := db.SetCallerBudget(r.Context(), h.db, id, *req.Quota, *req.CostBudgetTotal, *req.BudgetExpiresAt); err != nil {
 		writeServiceError(w, "set budget", err)
 		return
 	}
@@ -109,16 +105,16 @@ func (h *Handler) SetBudget(w http.ResponseWriter, r *http.Request) {
 }
 
 func (r setBudgetRequest) validate(now time.Time) error {
-	if r.Quota == nil || r.CostBudget == nil || r.BudgetExpiresAt == nil {
-		return errors.New("quota, cost_budget and budget_expires_at are required")
+	if r.Quota == nil || r.CostBudgetTotal == nil || r.BudgetExpiresAt == nil {
+		return errors.New("quota, cost_budget_total and budget_expires_at are required")
 	}
 
 	if r.Quota.CPUCore < 0 || r.Quota.RAMGB < 0 || r.Quota.DiskGB < 0 {
 		return errors.New("quota must not be negative")
 	}
 
-	if r.CostBudget.IsNegative() {
-		return errors.New("cost_budget must not be negative")
+	if r.CostBudgetTotal.IsNegative() {
+		return errors.New("cost_budget_total must not be negative")
 	}
 
 	if !r.BudgetExpiresAt.After(now) {
