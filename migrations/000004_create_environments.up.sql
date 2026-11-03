@@ -18,3 +18,4 @@ CREATE TABLE environments (
 );
 
 CREATE INDEX environments_caller_id_idx ON environments (caller_id);
+CREATE INDEX environments_status_idx on environments (status);

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -51,8 +52,19 @@ func main() {
 	envs := env.NewManager(pool, map[provider.Type]provider.Provider{provider.Docker: d})
 
 	log.Printf("worker deleting expired environments every %s", interval)
-	worker.New(pool, envs, interval).Run(ctx)
+	w := worker.New(pool, envs, interval)
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		w.Run(ctx)
+	})
+
+	wg.Go(func() {
+		w.RemovedEnv(ctx)
+	})
 
 	log.Print("waiting for in-flight deletions")
+	wg.Wait()
 	envs.Wait()
 }

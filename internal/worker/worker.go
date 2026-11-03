@@ -9,6 +9,7 @@ import (
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/env"
+	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
 type Worker struct {
@@ -19,6 +20,39 @@ type Worker struct {
 
 func New(q db.DBTX, envs *env.Manager, interval time.Duration) *Worker {
 	return &Worker{db: q, envs: envs, interval: interval}
+}
+
+func (w *Worker) RemovedEnv(ctx context.Context) {
+	t := time.NewTicker(w.interval)
+	defer t.Stop()
+
+	for {
+		// not efficient
+		env, err := db.ListActiveEnvironments(ctx, w.db)
+		if err != nil {
+			continue
+		}
+
+		for _, e := range env {
+			status, err := w.envs.Status(ctx, e)
+			if err != nil {
+				continue
+			}
+
+			if status == provider.StatusUnknown || status == provider.StatusMissing {
+				if _, err := w.envs.Remove(ctx, e); err != nil {
+					continue
+				}
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+
+	}
 }
 
 func (w *Worker) Run(ctx context.Context) {
