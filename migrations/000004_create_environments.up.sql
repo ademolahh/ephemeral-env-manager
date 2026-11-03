@@ -21,6 +21,6 @@ CREATE TABLE environments (
     charged_cost     numeric CHECK (charged_cost BETWEEN 0 AND estimated_cost)
 );
 
-CREATE INDEX environments_caller_id_idx ON environments (caller_id);
+CREATE INDEX environments_caller_created_idx ON environments (caller_id, created_at DESC, id DESC);
 CREATE INDEX environments_status_idx on environments (status);
 CREATE UNIQUE INDEX environments_caller_idempotency_key_idx ON environments (caller_id, idempotency_key);

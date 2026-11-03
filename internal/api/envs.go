@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,7 +21,20 @@ import (
 const (
 	maxBodyBytes         = 1 << 20
 	maxIdempotencyKeyLen = 255
+	defaultListLimit     = 10
+	maxListLimit         = 100
 )
+
+var envStatuses = []db.EnvStatus{db.EnvProvisioning, db.EnvRunning, db.EnvDeleting, db.EnvDeleted, db.EnvFailed}
+
+type listEnvsResponse struct {
+	Environments []db.Environment     `json:"environments"`
+	Page         int                  `json:"page"`
+	Limit        int                  `json:"limit"`
+	NextPage     int                  `json:"next_page,omitempty"`
+	Total        int                  `json:"total"`
+	Counts       map[db.EnvStatus]int `json:"counts"`
+}
 
 var serviceName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
@@ -102,13 +118,81 @@ func (h *Handler) GetEnv(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListEnvs(w http.ResponseWriter, r *http.Request) {
-	envs, err := db.ListCallerEnvironments(r.Context(), h.db, callerFrom(r.Context()).ID)
+	status, page, limit, err := parseListParams(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	callerID := callerFrom(r.Context()).ID
+	envs, err := db.ListCallerEnvironments(r.Context(), h.db, callerID, db.EnvironmentFilter{
+		Status: status,
+		Limit:  limit + 1,
+		Offset: (page - 1) * limit,
+	})
 	if err != nil {
 		writeServiceError(w, "list environments", err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, envs)
+	counts, err := db.CountCallerEnvironments(r.Context(), h.db, callerID)
+	if err != nil {
+		writeServiceError(w, "count environments", err)
+		return
+	}
+
+	resp := listEnvsResponse{Environments: envs, Page: page, Limit: limit, Counts: map[db.EnvStatus]int{}}
+	if len(envs) > limit {
+		resp.Environments = envs[:limit]
+		resp.NextPage = page + 1
+	}
+
+	if resp.Environments == nil {
+		resp.Environments = []db.Environment{}
+	}
+
+	for _, s := range envStatuses {
+		resp.Counts[s] = counts[s]
+		resp.Total += counts[s]
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func parseListParams(r *http.Request) (db.EnvStatus, int, int, error) {
+	q := r.URL.Query()
+	var status db.EnvStatus
+	if v := q.Get("status"); v != "" {
+		status = db.EnvStatus(strings.ToUpper(v))
+		if !slices.Contains(envStatuses, status) {
+			return "", 0, 0, fmt.Errorf("status %q must be one of PROVISIONING, RUNNING, DELETING, DELETED, FAILED", v)
+		}
+	}
+
+	page, err := positiveParam(q.Get("page"), 1, 0)
+	if err != nil {
+		return "", 0, 0, errors.New("page must be a positive number")
+	}
+
+	limit, err := positiveParam(q.Get("limit"), defaultListLimit, maxListLimit)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("limit must be between 1 and %d", maxListLimit)
+	}
+
+	return status, page, limit, nil
+}
+
+func positiveParam(v string, def, max int) (int, error) {
+	if v == "" {
+		return def, nil
+	}
+
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || (max > 0 && n > max) {
+		return 0, errors.New("out of range")
+	}
+
+	return n, nil
 }
 
 func (h *Handler) DeleteEnv(w http.ResponseWriter, r *http.Request) {

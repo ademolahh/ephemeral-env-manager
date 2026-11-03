@@ -252,8 +252,42 @@ func ListDeletingEnvironments(ctx context.Context, q DBTX) ([]Environment, error
 	return listEnvironments(ctx, q, `WHERE status = 'DELETING' ORDER BY created_at`)
 }
 
-func ListCallerEnvironments(ctx context.Context, q DBTX, callerID uuid.UUID) ([]Environment, error) {
-	return listEnvironments(ctx, q, `WHERE caller_id = $1 ORDER BY created_at DESC`, callerID)
+type EnvironmentFilter struct {
+	Status EnvStatus
+	Limit  int
+	Offset int
+}
+
+func ListCallerEnvironments(ctx context.Context, q DBTX, callerID uuid.UUID, f EnvironmentFilter) ([]Environment, error) {
+	return listEnvironments(ctx, q, `
+		WHERE caller_id = $1 AND ($2 = '' OR status::text = $2)
+		ORDER BY created_at DESC, id DESC
+		LIMIT $3 OFFSET $4`,
+		callerID, string(f.Status), f.Limit, f.Offset)
+}
+
+func CountCallerEnvironments(ctx context.Context, q DBTX, callerID uuid.UUID) (map[EnvStatus]int, error) {
+	rows, err := q.Query(ctx, `SELECT status, count(*) FROM environments WHERE caller_id = $1 GROUP BY status`, callerID)
+	if err != nil {
+		return nil, fmt.Errorf("count environments: %w", err)
+	}
+	defer rows.Close()
+
+	counts := map[EnvStatus]int{}
+	for rows.Next() {
+		var status EnvStatus
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			return nil, fmt.Errorf("count environments: %w", err)
+		}
+		counts[status] = n
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("count environments: %w", err)
+	}
+
+	return counts, nil
 }
 
 func ListActiveEnvironments(ctx context.Context, q DBTX) ([]Environment, error) {
