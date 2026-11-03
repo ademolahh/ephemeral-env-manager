@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101827" />
+    <title>Environments · EEM</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="EEM home"
+          ><span class="brand-mark">◇</span
+          ><span
+            ><strong>EEM</strong><small>ENVIRONMENT MANAGER</small></span
+          ></a
+        >
+        <div class="sidebar-section">WORKSPACE</div>
+        <div class="nav-item active">
+          <span class="nav-icon">▦</span> Environments
+          <span class="nav-dot"></span>
+        </div>
+        <div class="sidebar-bottom">
+          <span class="status-pulse"></span><span>System ready</span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <span class="breadcrumb">Workspace <span>/</span> Environments</span
+          ><span id="account" class="account" hidden>API key access</span>
+        </header>
+
+        <section id="login-view" class="login-view">
+          <div class="login-copy">
+            <div class="eyebrow">
+              <span class="eyebrow-line"></span> YOUR WORKSPACE, ON DEMAND
+            </div>
+            <h1>Every environment,<br /><em>in one place.</em></h1>
+            <p>
+              Enter your API key to see the environments linked to your account,
+              with their status, resources, and expiry at a glance.
+            </p>
+            <div class="login-features">
+              <span>● Live status</span><span>● Resource visibility</span
+              ><span>● Simple access</span>
+            </div>
+          </div>
+          <div class="login-card">
+            <div class="card-top">
+              <span class="card-symbol">◇</span
+              ><span class="card-overline">SECURE ACCESS</span>
+            </div>
+            <h2>Welcome back</h2>
+            <p class="card-description">
+              Use your EEM API key to access your environments.
+            </p>
+            <form id="key-form">
+              <label for="api-key">API key</label>
+              <div class="key-input">
+                <input
+                  id="api-key"
+                  type="password"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="eem_••••••••••••••••"
+                  required
+                /><button
+                  type="button"
+                  id="toggle-key"
+                  aria-label="Show API key"
+                >
+                  Show
+                </button>
+              </div>
+              <button class="key-button" type="submit">
+                Access environments <span>→</span>
+              </button>
+            </form>
+            <p id="login-error" class="form-error" role="alert" hidden></p>
+            <div class="card-footer">
+              Your API key stays in this browser tab session.
+            </div>
+          </div>
+        </section>
+
+        <section id="dashboard-view" class="dashboard" hidden>
+          <div class="heading-row">
+            <div>
+              <div class="eyebrow">
+                <span class="eyebrow-line"></span> OVERVIEW
+              </div>
+              <h1>Environments</h1>
+              <p>All environments associated with your account.</p>
+            </div>
+            <button id="sign-out" class="outline-button">
+              Sign out <span>↗</span>
+            </button>
+          </div>
+          <div class="stats">
+            <div class="stat-card">
+              <span class="stat-label">TOTAL ENVIRONMENTS</span
+              ><strong id="total-count">—</strong
+              ><span class="stat-caption">Across all statuses</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">RUNNING NOW</span
+              ><strong id="running-count">—</strong
+              ><span class="stat-caption"
+                ><span class="mini-dot green"></span> Active instances</span
+              >
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">PROVISIONING</span
+              ><strong id="provisioning-count">—</strong
+              ><span class="stat-caption"
+                ><span class="mini-dot amber"></span> Being prepared</span
+              >
+            </div>
+          </div>
+          <section class="budget-panel" aria-labelledby="budget-heading">
+            <div class="budget-heading">
+              <div>
+                <h2 id="budget-heading">Cost budget (USD)</h2>
+                <p>Active environments count their planned lifetime cost.</p>
+              </div>
+              <span id="budget-expiry">Loading budget…</span>
+            </div>
+            <div class="budget-values">
+              <div><span>GIVEN</span><strong id="budget-given">—</strong></div>
+              <div><span>USED</span><strong id="budget-used">—</strong></div>
+              <div>
+                <span>REMAINING</span><strong id="budget-remaining">—</strong>
+              </div>
+            </div>
+            <div
+              class="budget-track"
+              role="progressbar"
+              aria-label="Budget used"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+            >
+              <span id="budget-fill"></span>
+            </div>
+            <p id="budget-resources-used" class="budget-resources"></p>
+            <p id="budget-resources-assigned" class="budget-resources"></p>
+            <p id="budget-error" class="budget-error" role="alert" hidden></p>
+          </section>
+          <div class="list-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Your environments</h2>
+                <p>Track the lifecycle of your temporary workspaces.</p>
+              </div>
+              <button
+                id="refresh"
+                class="refresh-button"
+                aria-label="Refresh environments"
+              >
+                ↻ <span>Refresh</span>
+              </button>
+            </div>
+            <div id="list-status" class="list-status" role="status">
+              Loading environments…
+            </div>
+            <div class="environment-grid" id="environment-grid" hidden></div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <dialog
+      id="delete-dialog"
+      class="confirm-dialog"
+      aria-labelledby="delete-dialog-title"
+      aria-describedby="delete-dialog-description"
+    >
+      <div class="confirm-icon" aria-hidden="true">!</div>
+      <h2 id="delete-dialog-title">Delete environment?</h2>
+      <p id="delete-dialog-description"></p>
+      <p id="delete-dialog-error" class="confirm-error" role="alert" hidden></p>
+      <div class="confirm-actions">
+        <button id="delete-cancel" class="confirm-cancel" type="button">
+          Cancel
+        </button>
+        <button id="delete-confirm" class="confirm-delete" type="button">
+          Delete environment
+        </button>
+      </div>
+    </dialog>
+  </body>
+</html>

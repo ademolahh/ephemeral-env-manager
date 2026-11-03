@@ -149,9 +149,9 @@ func tpl(m map[string]any) map[string]any {
 	return m["template"].(map[string]any)
 }
 
-func decodeEnv(t *testing.T, rec *httptest.ResponseRecorder) envResponse {
+func decodeEnv(t *testing.T, rec *httptest.ResponseRecorder) db.Environment {
 	t.Helper()
-	var e envResponse
+	var e db.Environment
 	if err := json.Unmarshal(rec.Body.Bytes(), &e); err != nil {
 		t.Fatalf("decode response %s: %v", rec.Body, err)
 	}

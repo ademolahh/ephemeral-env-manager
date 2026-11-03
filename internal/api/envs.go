@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/env"
@@ -33,22 +32,6 @@ type createEnvRequest struct {
 type templateRequest struct {
 	provider.Template
 	TTL string `json:"ttl"`
-}
-
-type envResponse struct {
-	ID              uuid.UUID          `json:"id"`
-	Status          db.EnvStatus       `json:"status"`
-	Type            db.EnvType         `json:"type"`
-	Provider        provider.Type      `json:"provider"`
-	Endpoint        *string            `json:"endpoint"`
-	Resources       provider.Resources `json:"resources"`
-	HourlyRate      decimal.Decimal    `json:"hourly_rate"`
-	TemplateName    string             `json:"template_name"`
-	TemplateVersion string             `json:"template_version"`
-	InstanceStatus  provider.Status    `json:"instance_status,omitempty"`
-	FailureReason   *string            `json:"failure_reason,omitempty"`
-	CreatedAt       time.Time          `json:"created_at"`
-	ExpiresAt       time.Time          `json:"expires_at"`
 }
 
 func (h *Handler) CreateEnv(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +81,7 @@ func (h *Handler) CreateEnv(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Location", "/envs/"+e.ID.String())
-	writeJSON(w, http.StatusAccepted, toEnvResponse(e))
+	writeJSON(w, http.StatusAccepted, e)
 }
 
 func (h *Handler) GetEnv(w http.ResponseWriter, r *http.Request) {
@@ -114,9 +97,18 @@ func (h *Handler) GetEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := toEnvResponse(e)
-	resp.InstanceStatus = status
-	writeJSON(w, http.StatusOK, resp)
+	e.InstanceStatus = status
+	writeJSON(w, http.StatusOK, e)
+}
+
+func (h *Handler) ListEnvs(w http.ResponseWriter, r *http.Request) {
+	envs, err := db.ListCallerEnvironments(r.Context(), h.db, callerFrom(r.Context()).ID)
+	if err != nil {
+		writeServiceError(w, "list environments", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, envs)
 }
 
 func (h *Handler) DeleteEnv(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +128,7 @@ func (h *Handler) DeleteEnv(w http.ResponseWriter, r *http.Request) {
 	if e.Status == db.EnvDeleting {
 		status = http.StatusAccepted
 	}
-	writeJSON(w, status, toEnvResponse(e))
+	writeJSON(w, status, e)
 }
 
 func (t templateRequest) toTemplate() (provider.Template, error) {
@@ -193,21 +185,4 @@ func validResources(what string, r provider.Resources) error {
 		return fmt.Errorf("%s resources must be at least 1 cpu_core, 1 ram_gb and 1 disk_gb", what)
 	}
 	return nil
-}
-
-func toEnvResponse(e db.Environment) envResponse {
-	return envResponse{
-		ID:              e.ID,
-		Status:          e.Status,
-		Type:            e.Type,
-		Provider:        e.Provider,
-		Endpoint:        e.Endpoint,
-		Resources:       e.Resources,
-		HourlyRate:      e.HourlyRate,
-		TemplateName:    e.TemplateName,
-		TemplateVersion: e.TemplateVersion,
-		FailureReason:   e.FailureReason,
-		CreatedAt:       e.CreatedAt,
-		ExpiresAt:       e.ExpiresAt,
-	}
 }

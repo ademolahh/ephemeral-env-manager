@@ -53,7 +53,7 @@ func (s server) delete(t *testing.T, key, id string) *httptest.ResponseRecorder 
 	return rec
 }
 
-func (s server) createEnv(t *testing.T, key string) envResponse {
+func (s server) createEnv(t *testing.T, key string) db.Environment {
 	t.Helper()
 	rec := s.post(t, key, validBody, nil)
 	if rec.Code != http.StatusAccepted {
