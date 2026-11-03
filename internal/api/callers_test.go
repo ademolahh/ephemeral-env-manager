@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,71 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
+
+func (s server) getBudget(t *testing.T, key, id string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/callers/"+id+"/budget", nil)
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	rec := httptest.NewRecorder()
+	s.handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestGetBudgetShowsGivenAndUsed(t *testing.T) {
+	s := newServer(t)
+	_, key := s.callerWithRole(t, db.RoleUser)
+	created := s.createEnv(t, key)
+
+	rec := s.getBudget(t, key, "me")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body)
+	}
+	var got budgetResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode budget: %v", err)
+	}
+	if got.Currency != "USD" {
+		t.Errorf("currency = %q, want USD", got.Currency)
+	}
+	if want := decimal.NewFromInt(100); !got.CostBudget.Equal(want) {
+		t.Errorf("cost budget = %s, want %s", got.CostBudget, want)
+	}
+	if want := created.HourlyRate.Mul(decimal.NewFromInt(4)); !got.CostUsed.Equal(want) {
+		t.Errorf("cost used = %s, want %s", got.CostUsed, want)
+	}
+	if want := got.CostBudget.Sub(got.CostUsed); !got.CostRemaining.Equal(want) {
+		t.Errorf("cost remaining = %s, want %s", got.CostRemaining, want)
+	}
+	if want := (provider.Resources{CPUCore: 3, RAMGB: 9, DiskGB: 22}); got.ResourcesUsed != want {
+		t.Errorf("resources used = %+v, want %+v", got.ResourcesUsed, want)
+	}
+}
+
+func TestGetBudgetAccess(t *testing.T) {
+	s := newServer(t)
+	ownerID, ownerKey := s.callerWithRole(t, db.RoleUser)
+	otherKey := s.keyWithRole(t, db.RoleUser)
+	adminKey := s.keyWithRole(t, db.RoleAdmin)
+	for _, tc := range []struct {
+		name, key, id string
+		want          int
+	}{
+		{"owner", ownerKey, ownerID.String(), http.StatusOK},
+		{"admin", adminKey, ownerID.String(), http.StatusOK},
+		{"other caller", otherKey, ownerID.String(), http.StatusNotFound},
+		{"unknown caller", adminKey, uuid.NewString(), http.StatusNotFound},
+		{"invalid id", ownerKey, "bad-id", http.StatusBadRequest},
+		{"missing key", "", "me", http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if rec := s.getBudget(t, tc.key, tc.id); rec.Code != tc.want {
+				t.Errorf("status = %d, want %d; body %s", rec.Code, tc.want, rec.Body)
+			}
+		})
+	}
+}
 
 func (s server) putBudget(t *testing.T, key, id, body string) *httptest.ResponseRecorder {
 	t.Helper()

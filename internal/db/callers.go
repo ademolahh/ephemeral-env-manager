@@ -33,6 +33,32 @@ type CallerLimits struct {
 	BudgetExpired bool
 }
 
+type CallerBudget struct {
+	Quota           provider.Resources
+	CostBudget      decimal.Decimal
+	BudgetSetAt     time.Time
+	BudgetExpiresAt time.Time
+}
+
+func GetCallerBudget(ctx context.Context, q DBTX, id uuid.UUID) (CallerBudget, error) {
+	var b CallerBudget
+	err := q.QueryRow(ctx, `
+	SELECT quota_cpu_cores, quota_ram_gb, quota_disk_gb,
+			cost_budget, budget_set_at, budget_expires_at
+		FROM callers WHERE id = $1`, id,
+	).Scan(&b.Quota.CPUCore, &b.Quota.RAMGB, &b.Quota.DiskGB,
+		&b.CostBudget, &b.BudgetSetAt, &b.BudgetExpiresAt)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CallerBudget{}, fmt.Errorf("get caller budget %s: %w", id, ErrCallerNotFound)
+	}
+
+	if err != nil {
+		return CallerBudget{}, fmt.Errorf("get caller budget %s: %w", id, err)
+	}
+	return b, nil
+}
+
 func CreateCaller(ctx context.Context, q DBTX, c NewCaller) (uuid.UUID, error) {
 	id := uuid.New()
 	_, err := q.Exec(ctx, `

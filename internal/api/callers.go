@@ -19,6 +19,62 @@ type setBudgetRequest struct {
 	BudgetExpiresAt *time.Time          `json:"budget_expires_at"`
 }
 
+type budgetResponse struct {
+	CallerID        uuid.UUID          `json:"caller_id"`
+	Currency        string             `json:"currency"`
+	CostBudget      decimal.Decimal    `json:"cost_budget"`
+	CostUsed        decimal.Decimal    `json:"cost_used"`
+	CostRemaining   decimal.Decimal    `json:"cost_remaining"`
+	BudgetExpiresAt time.Time          `json:"budget_expires_at"`
+	Quota           provider.Resources `json:"quota"`
+	ResourcesUsed   provider.Resources `json:"resources_used"`
+}
+
+func (h *Handler) GetBudget(w http.ResponseWriter, r *http.Request) {
+	caller := callerFrom(r.Context())
+	id := caller.ID
+	if r.PathValue("id") != "me" {
+		var err error
+		id, err = uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid caller id")
+			return
+		}
+		if id != caller.ID && caller.Role != db.RoleAdmin {
+			writeError(w, http.StatusNotFound, "caller not found")
+			return
+		}
+	}
+
+	budget, err := db.GetCallerBudget(r.Context(), h.db, id)
+	if err != nil {
+		writeServiceError(w, "get budget", err)
+		return
+	}
+	used, err := db.CallerSpend(r.Context(), h.db, id, budget.BudgetSetAt)
+	if err != nil {
+		writeServiceError(w, "get cost usage", err)
+		return
+	}
+
+	resourcesUsed, err := db.CallerUsage(r.Context(), h.db, id)
+	if err != nil {
+		writeServiceError(w, "get resource usage", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, budgetResponse{
+		CallerID:        id,
+		Currency:        "USD",
+		CostBudget:      budget.CostBudget.Add(used),
+		CostUsed:        used,
+		CostRemaining:   budget.CostBudget,
+		BudgetExpiresAt: budget.BudgetExpiresAt,
+		Quota:           budget.Quota,
+		ResourcesUsed:   resourcesUsed,
+	})
+}
+
 func (h *Handler) SetBudget(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
