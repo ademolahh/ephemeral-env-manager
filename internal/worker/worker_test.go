@@ -19,10 +19,12 @@ import (
 )
 
 type fakeProvider struct {
-	mu        sync.Mutex
-	deleted   []string
-	statuses  map[string]provider.Status
-	statusErr error
+	mu          sync.Mutex
+	deleted     []string
+	statuses    map[string]provider.Status
+	statusErr   error
+	deleteFails int
+	listed      []string
 }
 
 func (f *fakeProvider) Create(ctx context.Context, id, workload string, temp provider.Template) (string, error) {
@@ -32,6 +34,10 @@ func (f *fakeProvider) Create(ctx context.Context, id, workload string, temp pro
 func (f *fakeProvider) Delete(ctx context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.deleteFails > 0 {
+		f.deleteFails--
+		return errors.New("daemon busy")
+	}
 	f.deleted = append(f.deleted, id)
 	return nil
 }
@@ -61,7 +67,11 @@ func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (strin
 	return "", nil
 }
 
-func (f *fakeProvider) List(ctx context.Context) ([]string, error) { return nil, nil }
+func (f *fakeProvider) List(ctx context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.listed), nil
+}
 
 func (f *fakeProvider) deletedIDs() []string {
 	f.mu.Lock()
@@ -310,4 +320,196 @@ func TestRun(t *testing.T) {
 		t.Fatal("Run() did not return after cancel")
 	}
 	f.m.Wait()
+}
+
+func (f fixture) exec(t *testing.T, sql string, args ...any) {
+	t.Helper()
+	if _, err := f.q.Exec(context.Background(), sql, args...); err != nil {
+		t.Fatalf("%s: %v", sql, err)
+	}
+}
+
+func (f fixture) otherCaller(t *testing.T) uuid.UUID {
+	t.Helper()
+	id, err := db.CreateCaller(context.Background(), f.q, db.NewCaller{
+		Role:            db.RoleUser,
+		PermittedEnv:    db.EnvProdBug,
+		Quota:           provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000},
+		CostBudgetTotal: decimal.RequireFromString("100"),
+		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("CreateCaller() error = %v", err)
+	}
+	return id
+}
+
+func TestSweepStopsCallersOverBudget(t *testing.T) {
+	for name, overBudget := range map[string]string{
+		"budget lowered below use": `UPDATE callers SET cost_used = 50, cost_budget_total = 10 WHERE id = $1`,
+		"budget expired":           `UPDATE callers SET budget_expires_at = now() - interval '1 hour' WHERE id = $1`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, dbtest.Pool(t))
+			running := f.env(t, provider.Docker, db.EnvRunning, false)
+			provisioning := f.env(t, provider.Docker, db.EnvProvisioning, false)
+			prodBug := f.env(t, provider.Docker, db.EnvRunning, false)
+			f.exec(t, `UPDATE environments SET type = 'PROD_BUG' WHERE id = $1`, prodBug)
+			other := f.env(t, provider.Docker, db.EnvRunning, false)
+			f.exec(t, `UPDATE environments SET caller_id = $2 WHERE id = $1`, other, f.otherCaller(t))
+			f.exec(t, overBudget, f.callerID)
+
+			if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
+				t.Fatalf("Sweep() error = %v", err)
+			}
+
+			for id, want := range map[uuid.UUID]db.EnvStatus{
+				running:      db.EnvDeleted,
+				provisioning: db.EnvDeleted,
+				prodBug:      db.EnvRunning,
+				other:        db.EnvRunning,
+			} {
+				if got := f.status(t, id); got != want {
+					t.Errorf("env %s status = %s, want %s", id, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestSweepAllowsBudgetFullyReserved(t *testing.T) {
+	f := newFixture(t, dbtest.Tx(t))
+	live := f.env(t, provider.Docker, db.EnvRunning, false)
+	f.exec(t, `UPDATE callers SET cost_used = 10, cost_budget_total = 10 WHERE id = $1`, f.callerID)
+
+	if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep() error = %v", err)
+	}
+	if got := f.status(t, live); got != db.EnvRunning {
+		t.Errorf("status = %s, want %s when the budget is exactly used", got, db.EnvRunning)
+	}
+}
+
+func TestSweepResolvesStuckProvisioning(t *testing.T) {
+	f := newFixture(t, dbtest.Pool(t))
+	healthy := f.env(t, provider.Docker, db.EnvProvisioning, false)
+	missing := f.env(t, provider.Docker, db.EnvProvisioning, false)
+	unhealthy := f.env(t, provider.Docker, db.EnvProvisioning, false)
+	starting := f.env(t, provider.Docker, db.EnvProvisioning, false)
+	f.fake.setStatus(missing, provider.StatusMissing)
+	f.fake.setStatus(unhealthy, provider.StatusUnhealthy)
+	f.fake.setStatus(starting, provider.StatusStarting)
+
+	w := New(f.q, f.m, time.Minute)
+	w.stuckAfter = 0
+	if err := w.Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep() error = %v", err)
+	}
+
+	for id, want := range map[uuid.UUID]db.EnvStatus{
+		healthy:   db.EnvRunning,
+		missing:   db.EnvFailed,
+		unhealthy: db.EnvFailed,
+		starting:  db.EnvFailed,
+	} {
+		if got := f.status(t, id); got != want {
+			t.Errorf("env %s status = %s, want %s", id, got, want)
+		}
+	}
+
+	got := f.fake.deletedIDs()
+	slices.Sort(got)
+	want := []string{missing.String(), unhealthy.String(), starting.String()}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("provider Delete calls = %v, want leftovers of failed envs %v", got, want)
+	}
+
+	e, err := db.GetEnvironment(context.Background(), f.q, missing)
+	if err != nil {
+		t.Fatalf("GetEnvironment() error = %v", err)
+	}
+	if e.FailureReason == nil || !strings.Contains(*e.FailureReason, "missing") {
+		t.Errorf("failure reason = %v, want it to name the instance status", e.FailureReason)
+	}
+}
+
+func TestSweepLeavesStuckProvisioningWhenProviderDown(t *testing.T) {
+	f := newFixture(t, dbtest.Tx(t))
+	stuck := f.env(t, provider.Docker, db.EnvProvisioning, false)
+	f.fake.statusErr = errors.New("daemon unreachable")
+
+	w := New(f.q, f.m, time.Minute)
+	w.stuckAfter = 0
+	if err := w.Sweep(context.Background()); err == nil || !strings.Contains(err.Error(), stuck.String()) {
+		t.Errorf("Sweep() error = %v, want error naming %s", err, stuck)
+	}
+
+	if got := f.status(t, stuck); got != db.EnvProvisioning {
+		t.Errorf("status = %s, want %s", got, db.EnvProvisioning)
+	}
+	if got := f.fake.deletedIDs(); len(got) != 0 {
+		t.Errorf("provider Delete calls = %v, want none", got)
+	}
+}
+
+func TestSweepWaitsBeforeResolvingProvisioning(t *testing.T) {
+	f := newFixture(t, dbtest.Tx(t))
+	fresh := f.env(t, provider.Docker, db.EnvProvisioning, false)
+	f.fake.setStatus(fresh, provider.StatusMissing)
+
+	if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep() error = %v", err)
+	}
+	if got := f.status(t, fresh); got != db.EnvProvisioning {
+		t.Errorf("status = %s, want %s before the stuck threshold", got, db.EnvProvisioning)
+	}
+}
+
+func TestSweepRetriesDeleting(t *testing.T) {
+	f := newFixture(t, dbtest.Tx(t))
+	deleting := f.env(t, provider.Docker, db.EnvDeleting, false)
+	f.fake.deleteFails = 1
+	w := New(f.q, f.m, time.Minute)
+
+	if err := w.Sweep(context.Background()); err == nil || !strings.Contains(err.Error(), deleting.String()) {
+		t.Errorf("first Sweep() error = %v, want error naming %s", err, deleting)
+	}
+	if got := f.status(t, deleting); got != db.EnvDeleting {
+		t.Fatalf("status after failed delete = %s, want %s", got, db.EnvDeleting)
+	}
+
+	if err := w.Sweep(context.Background()); err != nil {
+		t.Fatalf("second Sweep() error = %v", err)
+	}
+	if got := f.status(t, deleting); got != db.EnvDeleted {
+		t.Errorf("status after retry = %s, want %s", got, db.EnvDeleted)
+	}
+}
+
+func TestSweepRemovesOrphans(t *testing.T) {
+	f := newFixture(t, dbtest.Tx(t))
+	running := f.env(t, provider.Docker, db.EnvRunning, false)
+	provisioning := f.env(t, provider.Docker, db.EnvProvisioning, false)
+	failed := f.env(t, provider.Docker, db.EnvFailed, false)
+	deleted := f.env(t, provider.Docker, db.EnvDeleted, false)
+	unknown := uuid.NewString()
+	f.fake.listed = []string{running.String(), provisioning.String(), failed.String(), deleted.String(), unknown, "not-an-env-id"}
+
+	if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep() error = %v", err)
+	}
+
+	got := f.fake.deletedIDs()
+	slices.Sort(got)
+	want := []string{failed.String(), deleted.String(), unknown}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("provider Delete calls = %v, want orphans %v", got, want)
+	}
+	for id, want := range map[uuid.UUID]db.EnvStatus{running: db.EnvRunning, provisioning: db.EnvProvisioning} {
+		if got := f.status(t, id); got != want {
+			t.Errorf("env %s status = %s, want %s", id, got, want)
+		}
+	}
 }

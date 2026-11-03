@@ -84,7 +84,11 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (db.Environment
 
 	bg := context.WithoutCancel(ctx)
 	for _, id := range r.preempted {
-		m.wg.Go(func() { m.teardown(bg, p, id) })
+		m.wg.Go(func() {
+			if err := m.Teardown(bg, db.Environment{ID: id, Provider: pt}); err != nil {
+				log.Print(err)
+			}
+		})
 	}
 
 	if r.created {
@@ -180,28 +184,142 @@ func (m *Manager) Status(ctx context.Context, e db.Environment) (provider.Status
 }
 
 func (m *Manager) Remove(ctx context.Context, e db.Environment) (db.Environment, error) {
-	p, ok := m.providers[e.Provider]
-	if !ok {
-		return db.Environment{}, fmt.Errorf("delete environment on %s: %w", e.Provider, ErrProviderUnavailable)
-	}
-
-	if e.Status == db.EnvProvisioning || e.Status == db.EnvRunning {
-		err := db.MarkEnvironmentDeleting(ctx, m.db, e.ID)
-		if err != nil && !errors.Is(err, db.ErrInvalidTransition) {
-			return db.Environment{}, fmt.Errorf("delete environment: %w", err)
-		}
-
-		if e, err = db.GetEnvironment(ctx, m.db, e.ID); err != nil {
-			return db.Environment{}, fmt.Errorf("delete environment: %w", err)
-		}
+	e, err := m.MarkDeleting(ctx, e)
+	if err != nil {
+		return db.Environment{}, err
 	}
 
 	if e.Status == db.EnvDeleting {
 		bg := context.WithoutCancel(ctx)
-		m.wg.Go(func() { m.teardown(bg, p, e.ID) })
+		m.wg.Go(func() {
+			if err := m.Teardown(bg, e); err != nil {
+				log.Print(err)
+			}
+		})
 	}
 
 	return e, nil
+}
+
+func (m *Manager) MarkDeleting(ctx context.Context, e db.Environment) (db.Environment, error) {
+	if _, ok := m.providers[e.Provider]; !ok {
+		return db.Environment{}, fmt.Errorf("delete environment on %s: %w", e.Provider, ErrProviderUnavailable)
+	}
+
+	if e.Status != db.EnvProvisioning && e.Status != db.EnvRunning {
+		return e, nil
+	}
+
+	err := db.MarkEnvironmentDeleting(ctx, m.db, e.ID)
+	if err != nil && !errors.Is(err, db.ErrInvalidTransition) {
+		return db.Environment{}, fmt.Errorf("delete environment: %w", err)
+	}
+
+	e, err = db.GetEnvironment(ctx, m.db, e.ID)
+	if err != nil {
+		return db.Environment{}, fmt.Errorf("delete environment: %w", err)
+	}
+
+	return e, nil
+}
+
+func (m *Manager) Teardown(ctx context.Context, e db.Environment) (err error) {
+	p, ok := m.providers[e.Provider]
+	if !ok {
+		return fmt.Errorf("delete environment %s on %s: %w", e.ID, e.Provider, ErrProviderUnavailable)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("delete environment %s: provider panic: %v", e.ID, r)
+		}
+	}()
+
+	if err := p.Delete(ctx, e.ID.String()); err != nil {
+		return fmt.Errorf("delete environment %s: %w", e.ID, err)
+	}
+
+	err = db.MarkEnvironmentDeleted(ctx, m.db, e.ID)
+	if err != nil && !errors.Is(err, db.ErrInvalidTransition) {
+		return fmt.Errorf("mark environment %s deleted: %w", e.ID, err)
+	}
+
+	return nil
+}
+
+func (m *Manager) ResolveStuck(ctx context.Context, e db.Environment) (db.EnvStatus, error) {
+	p, ok := m.providers[e.Provider]
+	if !ok {
+		return "", fmt.Errorf("resolve environment %s on %s: %w", e.ID, e.Provider, ErrProviderUnavailable)
+	}
+
+	statusCtx, cancel := context.WithTimeout(ctx, statusTimeout)
+	status, err := p.Status(statusCtx, e.ID.String())
+	cancel()
+	if err != nil {
+		return "", fmt.Errorf("resolve environment %s: provider unavailable: %w", e.ID, err)
+	}
+
+	if status == provider.StatusRunning {
+		err := db.MarkEnvironmentRunning(ctx, m.db, e.ID)
+		if errors.Is(err, db.ErrInvalidTransition) {
+			return "", nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("resolve environment %s: %w", e.ID, err)
+		}
+		return db.EnvRunning, nil
+	}
+
+	if err := p.Delete(ctx, e.ID.String()); err != nil {
+		return "", fmt.Errorf("resolve environment %s: remove leftovers: %w", e.ID, err)
+	}
+
+	err = db.MarkEnvironmentFailed(ctx, m.db, e.ID, fmt.Sprintf("provisioning did not finish: instance %s", status))
+	if errors.Is(err, db.ErrInvalidTransition) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve environment %s: %w", e.ID, err)
+	}
+	return db.EnvFailed, nil
+}
+
+func (m *Manager) RemoveOrphans(ctx context.Context) ([]string, error) {
+	var removed []string
+	var errs []error
+	for pt, p := range m.providers {
+		ids, err := p.List(ctx)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("list %s environments: %w", pt, err))
+			continue
+		}
+
+		for _, raw := range ids {
+			id, err := uuid.Parse(raw)
+			if err != nil {
+				continue
+			}
+
+			e, err := db.GetEnvironment(ctx, m.db, id)
+			if err != nil && !errors.Is(err, db.ErrEnvNotFound) {
+				errs = append(errs, fmt.Errorf("orphan %s: %w", raw, err))
+				continue
+			}
+
+			if err == nil && e.Provider == pt && e.Status != db.EnvFailed && e.Status != db.EnvDeleted {
+				continue
+			}
+
+			if err := p.Delete(ctx, raw); err != nil {
+				errs = append(errs, fmt.Errorf("remove orphan %s from %s: %w", raw, pt, err))
+				continue
+			}
+			removed = append(removed, raw)
+		}
+	}
+
+	return removed, errors.Join(errs...)
 }
 
 func (m *Manager) Wait() {
@@ -234,24 +352,6 @@ func (m *Manager) provision(ctx context.Context, p provider.Provider, id uuid.UU
 
 	if err != nil {
 		log.Printf("provision environment %s: %v", id, err)
-	}
-}
-
-func (m *Manager) teardown(ctx context.Context, p provider.Provider, id uuid.UUID) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("delete environment %s: provider panic: %v", id, r)
-		}
-	}()
-
-	if err := p.Delete(ctx, id.String()); err != nil {
-		log.Printf("delete environment %s: %v", id, err)
-		return
-	}
-
-	err := db.MarkEnvironmentDeleted(ctx, m.db, id)
-	if err != nil && !errors.Is(err, db.ErrInvalidTransition) {
-		log.Printf("mark environment %s deleted: %v", id, err)
 	}
 }
 

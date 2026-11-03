@@ -248,6 +248,16 @@ func ListStuckProvisioning(ctx context.Context, q DBTX, olderThan time.Duration)
 		ORDER BY created_at`, olderThan.Seconds())
 }
 
+func ListBudgetExhaustedEnvironments(ctx context.Context, q DBTX) ([]Environment, error) {
+	return listEnvironments(ctx, q, `
+		WHERE status IN ('PROVISIONING', 'RUNNING') AND type <> 'PROD_BUG'
+			AND caller_id IN (
+				SELECT id FROM callers
+				WHERE budget_expires_at <= now() OR cost_used > cost_budget_total
+			)
+		ORDER BY created_at`)
+}
+
 func ListDeletingEnvironments(ctx context.Context, q DBTX) ([]Environment, error) {
 	return listEnvironments(ctx, q, `WHERE status = 'DELETING' ORDER BY created_at`)
 }

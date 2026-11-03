@@ -77,7 +77,28 @@ func (d *Docker) Exec(ctx context.Context, id string, cmd []string) (string, err
 }
 
 func (d *Docker) List(ctx context.Context) ([]string, error) {
-	return nil, nil
+	filters := client.Filters{}.Add("label", envLabel)
+	containers, err := d.cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: filters})
+	if err != nil {
+		return nil, fmt.Errorf("list envs: list containers: %w", err)
+	}
+
+	networks, err := d.cli.NetworkList(ctx, client.NetworkListOptions{Filters: filters})
+	if err != nil {
+		return nil, fmt.Errorf("list envs: list networks: %w", err)
+	}
+
+	seen := map[string]bool{}
+	for _, c := range containers.Items {
+		seen[c.Labels[envLabel]] = true
+	}
+
+	for _, n := range networks.Items {
+		seen[n.Labels[envLabel]] = true
+	}
+	delete(seen, "")
+
+	return slices.Sorted(maps.Keys(seen)), nil
 }
 
 func (d *Docker) create(ctx context.Context, id, workload string, temp provider.Template) (string, error) {

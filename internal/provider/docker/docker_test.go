@@ -335,6 +335,54 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+func TestList(t *testing.T) {
+	d := testDocker(t)
+	ctx := context.Background()
+	full := newEnvID(t, d)
+	networkOnly := newEnvID(t, d)
+
+	if _, err := d.Create(ctx, full, testImage, provider.Template{
+		Workload: provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := d.cli.NetworkCreate(ctx, networkName(networkOnly), client.NetworkCreateOptions{
+		Driver:   "bridge",
+		Internal: true,
+		Labels:   map[string]string{envLabel: networkOnly},
+	}); err != nil {
+		t.Fatalf("create network: %v", err)
+	}
+
+	got, err := d.List(ctx)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	for _, id := range []string{full, networkOnly} {
+		if !slices.Contains(got, id) {
+			t.Errorf("List() = %v, want it to contain %s", got, id)
+		}
+	}
+	if len(slices.Compact(slices.Clone(got))) != len(got) {
+		t.Errorf("List() = %v, want each env once", got)
+	}
+
+	for _, id := range []string{full, networkOnly} {
+		if err := d.Delete(ctx, id); err != nil {
+			t.Fatalf("Delete(%s) error = %v", id, err)
+		}
+	}
+	got, err = d.List(ctx)
+	if err != nil {
+		t.Fatalf("List() after delete error = %v", err)
+	}
+	for _, id := range []string{full, networkOnly} {
+		if slices.Contains(got, id) {
+			t.Errorf("List() after delete = %v, still contains %s", got, id)
+		}
+	}
+}
+
 func TestAggregateStatus(t *testing.T) {
 	const id = "env-1"
 	workload := func(state container.ContainerState, health container.HealthStatus) container.Summary {
