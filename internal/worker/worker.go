@@ -22,46 +22,13 @@ func New(q db.DBTX, envs *env.Manager, interval time.Duration) *Worker {
 	return &Worker{db: q, envs: envs, interval: interval}
 }
 
-func (w *Worker) RemovedEnv(ctx context.Context) {
-	t := time.NewTicker(w.interval)
-	defer t.Stop()
-
-	for {
-		// not efficient
-		env, err := db.ListActiveEnvironments(ctx, w.db)
-		if err != nil {
-			continue
-		}
-
-		for _, e := range env {
-			status, err := w.envs.Status(ctx, e)
-			if err != nil {
-				continue
-			}
-
-			if status == provider.StatusUnknown || status == provider.StatusMissing {
-				if _, err := w.envs.Remove(ctx, e); err != nil {
-					continue
-				}
-			}
-		}
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-
-	}
-}
-
 func (w *Worker) Run(ctx context.Context) {
 	t := time.NewTicker(w.interval)
 	defer t.Stop()
 
 	for {
-		if err := w.DeleteExpired(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("delete expired environments: %v", err)
+		if err := w.Sweep(ctx); err != nil && ctx.Err() == nil {
+			log.Printf("sweep environments: %v", err)
 		}
 
 		select {
@@ -72,20 +39,51 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-func (w *Worker) DeleteExpired(ctx context.Context) error {
-	expired, err := db.ListExpiredEnvironments(ctx, w.db)
+func (w *Worker) Sweep(ctx context.Context) error {
+	active, err := db.ListActiveEnvironments(ctx, w.db)
 	if err != nil {
 		return err
 	}
 
 	var errs []error
-	for _, e := range expired {
+	for _, e := range active {
+		reason, err := w.removalReason(ctx, e)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("environment %s: %w", e.ID, err))
+			continue
+		}
+
+		if reason == "" {
+			continue
+		}
+
 		if _, err := w.envs.Remove(ctx, e); err != nil {
 			errs = append(errs, fmt.Errorf("environment %s: %w", e.ID, err))
 			continue
 		}
-		log.Printf("environment %s expired at %s, deleting", e.ID, e.ExpiresAt.Format(time.RFC3339))
+		log.Printf("environment %s %s, deleting", e.ID, reason)
 	}
 
 	return errors.Join(errs...)
+}
+
+func (w *Worker) removalReason(ctx context.Context, e db.Environment) (string, error) {
+	if !e.ExpiresAt.After(time.Now()) {
+		return "expired at " + e.ExpiresAt.Format(time.RFC3339), nil
+	}
+
+	if e.Status != db.EnvRunning {
+		return "", nil
+	}
+
+	status, err := w.envs.Status(ctx, e)
+	if err != nil {
+		return "", err
+	}
+
+	if status == provider.StatusMissing || status == provider.StatusUnknown {
+		return "missing from " + string(e.Provider), nil
+	}
+
+	return "", nil
 }

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -18,8 +19,10 @@ import (
 )
 
 type fakeProvider struct {
-	mu      sync.Mutex
-	deleted []string
+	mu        sync.Mutex
+	deleted   []string
+	statuses  map[string]provider.Status
+	statusErr error
 }
 
 func (f *fakeProvider) Create(ctx context.Context, id, workload string, temp provider.Template) (string, error) {
@@ -34,7 +37,24 @@ func (f *fakeProvider) Delete(ctx context.Context, id string) error {
 }
 
 func (f *fakeProvider) Status(ctx context.Context, id string) (provider.Status, error) {
-	return "", nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.statusErr != nil {
+		return "", f.statusErr
+	}
+	if s, ok := f.statuses[id]; ok {
+		return s, nil
+	}
+	return provider.StatusRunning, nil
+}
+
+func (f *fakeProvider) setStatus(id uuid.UUID, s provider.Status) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.statuses == nil {
+		f.statuses = map[string]provider.Status{}
+	}
+	f.statuses[id.String()] = s
 }
 
 func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (string, error) {
@@ -116,7 +136,7 @@ func (f fixture) status(t *testing.T, id uuid.UUID) db.EnvStatus {
 	return e.Status
 }
 
-func TestDeleteExpired(t *testing.T) {
+func TestSweepDeletesExpired(t *testing.T) {
 	f := newFixture(t, dbtest.Pool(t))
 	expiredRunning := f.env(t, provider.Docker, db.EnvRunning, true)
 	expiredProvisioning := f.env(t, provider.Docker, db.EnvProvisioning, true)
@@ -124,8 +144,8 @@ func TestDeleteExpired(t *testing.T) {
 	expiredFailed := f.env(t, provider.Docker, db.EnvFailed, true)
 	expiredDeleted := f.env(t, provider.Docker, db.EnvDeleted, true)
 
-	if err := New(f.q, f.m, time.Minute).DeleteExpired(context.Background()); err != nil {
-		t.Fatalf("DeleteExpired() error = %v", err)
+	if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep() error = %v", err)
 	}
 	f.m.Wait()
 
@@ -150,12 +170,12 @@ func TestDeleteExpired(t *testing.T) {
 	}
 }
 
-func TestDeleteExpiredNothingExpired(t *testing.T) {
+func TestSweepNothingToRemove(t *testing.T) {
 	f := newFixture(t, dbtest.Tx(t))
 	live := f.env(t, provider.Docker, db.EnvRunning, false)
 
-	if err := New(f.q, f.m, time.Minute).DeleteExpired(context.Background()); err != nil {
-		t.Fatalf("DeleteExpired() error = %v", err)
+	if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep() error = %v", err)
 	}
 	f.m.Wait()
 
@@ -167,22 +187,87 @@ func TestDeleteExpiredNothingExpired(t *testing.T) {
 	}
 }
 
-func TestDeleteExpiredContinuesPastErrors(t *testing.T) {
+func TestSweepContinuesPastErrors(t *testing.T) {
 	f := newFixture(t, dbtest.Tx(t))
 	unconfigured := f.env(t, provider.Cloud, db.EnvRunning, true)
 	docker := f.env(t, provider.Docker, db.EnvRunning, true)
 
-	err := New(f.q, f.m, time.Minute).DeleteExpired(context.Background())
+	err := New(f.q, f.m, time.Minute).Sweep(context.Background())
 	f.m.Wait()
 
 	if err == nil || !strings.Contains(err.Error(), unconfigured.String()) {
-		t.Errorf("DeleteExpired() error = %v, want error naming %s", err, unconfigured)
+		t.Errorf("Sweep() error = %v, want error naming %s", err, unconfigured)
 	}
 	if got := f.status(t, unconfigured); got != db.EnvRunning {
 		t.Errorf("unconfigured provider env status = %s, want %s", got, db.EnvRunning)
 	}
 	if got := f.status(t, docker); got != db.EnvDeleted {
 		t.Errorf("docker env status = %s, want %s", got, db.EnvDeleted)
+	}
+}
+
+func TestSweepDeletesMissing(t *testing.T) {
+	f := newFixture(t, dbtest.Pool(t))
+	missing := f.env(t, provider.Docker, db.EnvRunning, false)
+	unknown := f.env(t, provider.Docker, db.EnvRunning, false)
+	stopped := f.env(t, provider.Docker, db.EnvRunning, false)
+	healthy := f.env(t, provider.Docker, db.EnvRunning, false)
+	f.fake.setStatus(missing, provider.StatusMissing)
+	f.fake.setStatus(unknown, provider.StatusUnknown)
+	f.fake.setStatus(stopped, provider.StatusStopped)
+
+	if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep() error = %v", err)
+	}
+	f.m.Wait()
+
+	for id, want := range map[uuid.UUID]db.EnvStatus{
+		missing: db.EnvDeleted,
+		unknown: db.EnvDeleted,
+		stopped: db.EnvRunning,
+		healthy: db.EnvRunning,
+	} {
+		if got := f.status(t, id); got != want {
+			t.Errorf("env %s status = %s, want %s", id, got, want)
+		}
+	}
+}
+
+func TestSweepIgnoresMissingWhileProvisioning(t *testing.T) {
+	f := newFixture(t, dbtest.Tx(t))
+	provisioning := f.env(t, provider.Docker, db.EnvProvisioning, false)
+	f.fake.setStatus(provisioning, provider.StatusMissing)
+
+	if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep() error = %v", err)
+	}
+	f.m.Wait()
+
+	if got := f.status(t, provisioning); got != db.EnvProvisioning {
+		t.Errorf("status = %s, want %s", got, db.EnvProvisioning)
+	}
+	if got := f.fake.deletedIDs(); len(got) != 0 {
+		t.Errorf("provider Delete calls = %v, want none", got)
+	}
+}
+
+func TestSweepReportsStatusErrors(t *testing.T) {
+	f := newFixture(t, dbtest.Pool(t))
+	live := f.env(t, provider.Docker, db.EnvRunning, false)
+	expired := f.env(t, provider.Docker, db.EnvRunning, true)
+	f.fake.statusErr = errors.New("daemon unreachable")
+
+	err := New(f.q, f.m, time.Minute).Sweep(context.Background())
+	f.m.Wait()
+
+	if err == nil || !strings.Contains(err.Error(), live.String()) {
+		t.Errorf("Sweep() error = %v, want error naming %s", err, live)
+	}
+	if got := f.status(t, live); got != db.EnvRunning {
+		t.Errorf("live env status = %s, want %s", got, db.EnvRunning)
+	}
+	if got := f.status(t, expired); got != db.EnvDeleted {
+		t.Errorf("expired env status = %s, want %s", got, db.EnvDeleted)
 	}
 }
 
