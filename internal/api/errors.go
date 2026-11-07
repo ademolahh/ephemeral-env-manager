@@ -35,13 +35,15 @@ func errorStatus(err error) int {
 		return http.StatusForbidden
 
 	case errors.Is(err, db.ErrEnvNotFound),
-		errors.Is(err, db.ErrCallerNotFound):
+		errors.Is(err, db.ErrCallerNotFound),
+		errors.Is(err, db.ErrTemplateNotFound):
 		return http.StatusNotFound
 
 	case errors.Is(err, db.ErrInvalidTransition),
 		errors.Is(err, env.ErrNotRunning),
 		errors.Is(err, db.ErrCapacityBelowUsage),
-		errors.Is(err, db.ErrGithubIDTaken):
+		errors.Is(err, db.ErrGithubIDTaken),
+		errors.Is(err, db.ErrTemplateExists):
 		return http.StatusConflict
 
 	case errors.Is(err, env.ErrCapacityExceeded),

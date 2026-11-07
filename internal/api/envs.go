@@ -39,10 +39,12 @@ type listEnvsResponse struct {
 var serviceName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 type createEnvRequest struct {
-	Type     db.EnvType      `json:"type"`
-	Provider provider.Type   `json:"provider"`
-	Workload string          `json:"workload"`
-	Template templateRequest `json:"template"`
+	Type      db.EnvType         `json:"type"`
+	Provider  provider.Type      `json:"provider"`
+	Workload  string             `json:"workload"`
+	Template  templateField      `json:"template"`
+	Resources *resourceOverrides `json:"resources"`
+	TTL       string             `json:"ttl"`
 }
 
 type templateRequest struct {
@@ -62,7 +64,17 @@ func (h *Handler) CreateEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tpl, err := req.Template.toTemplate()
+	tr, ok := h.templateFor(w, r, req.Template)
+	if !ok {
+		return
+	}
+
+	if err := req.override(&tr); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	tpl, err := tr.toTemplate()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

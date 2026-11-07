@@ -21,6 +21,9 @@ func Routes(h *Handler) http.Handler {
 	mux.HandleFunc("GET /envs/{id}", h.GetEnv)
 	mux.HandleFunc("DELETE /envs/{id}", h.DeleteEnv)
 	mux.HandleFunc("POST /envs/{id}/exec", h.ExecEnv)
+	mux.Handle("POST /templates", requireAdmin(http.HandlerFunc(h.CreateTemplate)))
+	mux.HandleFunc("GET /templates", h.ListTemplates)
+	mux.HandleFunc("GET /templates/{name}/{version}", h.GetTemplate)
 
 	assets, _ := fs.Sub(webFiles, "web")
 	frontend := http.FileServer(http.FS(assets))
