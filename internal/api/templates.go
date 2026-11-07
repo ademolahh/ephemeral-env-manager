@@ -7,12 +7,21 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
+
+var serviceName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+type templateRequest struct {
+	provider.Template
+	TTL string `json:"ttl"`
+}
 
 type templateField struct {
 	Ref    string
@@ -156,4 +165,60 @@ func (h *Handler) GetTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, spec)
+}
+
+func (t templateRequest) toTemplate() (provider.Template, error) {
+	tpl := t.Template
+	if tpl.Name == "" || tpl.Version == "" {
+		return provider.Template{}, errors.New("template name and version are required")
+	}
+
+	if t.TTL == "" {
+		return provider.Template{}, errors.New("template ttl is required")
+	}
+
+	ttl, err := time.ParseDuration(t.TTL)
+	if err != nil || ttl <= 0 {
+		return provider.Template{}, fmt.Errorf("template ttl %q must be a positive duration like 4h", t.TTL)
+	}
+	tpl.TTL = ttl
+
+	if err := validResources("workload", tpl.Workload.Resources); err != nil {
+		return provider.Template{}, err
+	}
+
+	for _, p := range tpl.Workload.Ports {
+		if p < 1 || p > 65535 {
+			return provider.Template{}, fmt.Errorf("workload port %d out of range", p)
+		}
+	}
+
+	seen := map[string]bool{"workload": true}
+	for _, s := range tpl.Services {
+		if !serviceName.MatchString(s.Name) {
+			return provider.Template{}, fmt.Errorf("service name %q must be lowercase letters, digits and hyphens", s.Name)
+		}
+
+		if seen[s.Name] {
+			return provider.Template{}, fmt.Errorf("service name %q is reserved or duplicated", s.Name)
+		}
+		seen[s.Name] = true
+
+		if s.Image == "" {
+			return provider.Template{}, fmt.Errorf("service %s image is required", s.Name)
+		}
+
+		if err := validResources("service "+s.Name, s.Resources); err != nil {
+			return provider.Template{}, err
+		}
+	}
+
+	return tpl, nil
+}
+
+func validResources(what string, r provider.Resources) error {
+	if r.CPUCore < 1 || r.RAMGB < 1 || r.DiskGB < 1 {
+		return fmt.Errorf("%s resources must be at least 1 cpu_core, 1 ram_gb and 1 disk_gb", what)
+	}
+	return nil
 }
