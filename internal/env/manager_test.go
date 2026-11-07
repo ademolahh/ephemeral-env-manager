@@ -39,6 +39,8 @@ type fakeProvider struct {
 	onCreate    func()
 	calls       []createCall
 	deleted     []string
+	address     string
+	addressErr  error
 }
 
 func (f *fakeProvider) Create(ctx context.Context, id, workload string, temp provider.Template) (string, error) {
@@ -66,6 +68,12 @@ func (f *fakeProvider) Status(ctx context.Context, id string) (provider.Status, 
 	defer f.mu.Unlock()
 	f.statusCalls++
 	return f.status, f.statusErr
+}
+
+func (f *fakeProvider) Address(ctx context.Context, id string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.address, f.addressErr
 }
 
 func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (string, error) {

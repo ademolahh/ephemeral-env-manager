@@ -16,6 +16,7 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/env"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider/docker"
+	"github.com/ademolahh/ephemeral-env-manager/internal/proxy"
 )
 
 func main() {
@@ -38,7 +39,19 @@ func main() {
 	}
 	defer pool.Close()
 
-	d, err := docker.New()
+	px, err := proxy.FromEnv()
+	if err != nil {
+		log.Fatalf("proxy: %v", err)
+	}
+
+	var dockerOpts []docker.Option
+	var envOpts []env.Option
+	if px != nil {
+		dockerOpts = append(dockerOpts, docker.WithProxy(px.Container))
+		envOpts = append(envOpts, env.WithProxy(px))
+	}
+
+	d, err := docker.New(dockerOpts...)
 	if err != nil {
 		log.Fatalf("docker: %v", err)
 	}
@@ -47,7 +60,7 @@ func main() {
 		log.Fatalf("docker: %v", err)
 	}
 
-	envs := env.NewManager(pool, map[provider.Type]provider.Provider{provider.Docker: d})
+	envs := env.NewManager(pool, map[provider.Type]provider.Provider{provider.Docker: d}, envOpts...)
 
 	srv := &http.Server{
 		Addr:              ":8080",

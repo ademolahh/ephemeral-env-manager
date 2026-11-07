@@ -7,6 +7,7 @@ CREATE TABLE environments (
     deleted_at       timestamptz,
     provider         provider NOT NULL,
     endpoint         text,
+    backend          text,
     ram_gb           integer NOT NULL CHECK (ram_gb >= 0),
     cpu_cores        integer NOT NULL CHECK (cpu_cores >= 0),
     disk_gb          integer NOT NULL CHECK (disk_gb >= 0),

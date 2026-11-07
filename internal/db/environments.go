@@ -16,6 +16,7 @@ import (
 var (
 	ErrEnvNotFound       = errors.New("environment not found")
 	ErrInvalidTransition = errors.New("invalid environment status transition")
+	ErrRouteNotFound     = errors.New("route not found")
 )
 
 type Environment struct {
@@ -27,6 +28,7 @@ type Environment struct {
 	DeletedAt       *time.Time         `json:"-"`
 	Provider        provider.Type      `json:"provider"`
 	Endpoint        *string            `json:"endpoint"`
+	Backend         *string            `json:"-"`
 	Resources       provider.Resources `json:"resources"`
 	HourlyRate      decimal.Decimal    `json:"hourly_rate"`
 	CallerID        uuid.UUID          `json:"-"`
@@ -52,14 +54,14 @@ type NewEnvironment struct {
 const environmentColumns = `
 	id, created_at, expires_at, type, status, deleted_at, provider, endpoint,
 	cpu_cores, ram_gb, disk_gb, hourly_rate, caller_id, failure_reason,
-	template_name, template_version`
+	template_name, template_version, backend`
 
 func scanEnvironment(row pgx.Row) (Environment, error) {
 	var e Environment
 	err := row.Scan(
 		&e.ID, &e.CreatedAt, &e.ExpiresAt, &e.Type, &e.Status, &e.DeletedAt, &e.Provider, &e.Endpoint,
 		&e.Resources.CPUCore, &e.Resources.RAMGB, &e.Resources.DiskGB, &e.HourlyRate, &e.CallerID, &e.FailureReason,
-		&e.TemplateName, &e.TemplateVersion,
+		&e.TemplateName, &e.TemplateVersion, &e.Backend,
 	)
 	return e, err
 }
@@ -131,6 +133,43 @@ func EnvironmentByIdempotencyKey(ctx context.Context, q DBTX, callerID uuid.UUID
 	}
 
 	return e, nil
+}
+
+func SetEnvironmentEndpoint(ctx context.Context, q DBTX, id uuid.UUID, endpoint string) error {
+	return setField(ctx, q, id, "endpoint", `UPDATE environments SET endpoint = $2 WHERE id = $1`, endpoint)
+}
+
+func SetEnvironmentBackend(ctx context.Context, q DBTX, id uuid.UUID, backend string) error {
+	return setField(ctx, q, id, "backend", `UPDATE environments SET backend = $2 WHERE id = $1`, backend)
+}
+
+func setField(ctx context.Context, q DBTX, id uuid.UUID, field, query string, value any) error {
+	tag, err := q.Exec(ctx, query, id, value)
+	if err != nil {
+		return fmt.Errorf("set environment %s %s: %w", id, field, err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("set environment %s %s: %w", id, field, ErrEnvNotFound)
+	}
+
+	return nil
+}
+
+func RouteBackend(ctx context.Context, q DBTX, id uuid.UUID) (string, error) {
+	var backend string
+	err := q.QueryRow(ctx, `
+		SELECT backend FROM environments
+		WHERE id = $1 AND status = 'RUNNING' AND backend IS NOT NULL`, id).Scan(&backend)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrRouteNotFound
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("route backend %s: %w", id, err)
+	}
+
+	return backend, nil
 }
 
 func MarkEnvironmentRunning(ctx context.Context, q DBTX, id uuid.UUID) error {

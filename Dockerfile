@@ -14,3 +14,8 @@ FROM gcr.io/distroless/static-debian12:nonroot AS eem
 COPY --from=build /out/eem /eem
 USER nonroot:nonroot
 ENTRYPOINT ["/eem"]
+
+FROM gcr.io/distroless/static-debian12:nonroot AS proxy
+COPY --from=build /out/proxy /proxy
+USER nonroot:nonroot
+ENTRYPOINT ["/proxy"]

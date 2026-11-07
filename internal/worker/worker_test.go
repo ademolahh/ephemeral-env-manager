@@ -63,6 +63,8 @@ func (f *fakeProvider) setStatus(id uuid.UUID, s provider.Status) {
 	f.statuses[id.String()] = s
 }
 
+func (f *fakeProvider) Address(ctx context.Context, id string) (string, error) { return "", nil }
+
 func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (string, error) {
 	return "", nil
 }

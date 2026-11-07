@@ -15,6 +15,7 @@ import (
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
+	"github.com/ademolahh/ephemeral-env-manager/internal/proxy"
 )
 
 var (
@@ -36,11 +37,23 @@ var envTypes = []db.EnvType{db.EnvRegularTesting, db.EnvPRReview, db.EnvProdBug}
 type Manager struct {
 	db        db.DBTX
 	providers map[provider.Type]provider.Provider
+	proxy     *proxy.Proxy
 	wg        sync.WaitGroup
 }
 
-func NewManager(q db.DBTX, providers map[provider.Type]provider.Provider) *Manager {
-	return &Manager{db: q, providers: providers}
+type Option func(*Manager)
+
+func WithProxy(p *proxy.Proxy) Option {
+	return func(m *Manager) { m.proxy = p }
+}
+
+func NewManager(q db.DBTX, providers map[provider.Type]provider.Provider, opts ...Option) *Manager {
+	m := &Manager{db: q, providers: providers}
+	for _, opt := range opts {
+		opt(m)
+	}
+
+	return m
 }
 
 type CreateRequest struct {
@@ -74,7 +87,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (db.Environment
 	var r reservation
 	err := pgx.BeginFunc(ctx, m.db, func(tx pgx.Tx) error {
 		var err error
-		r, err = reserve(ctx, tx, pt, req)
+		r, err = reserve(ctx, tx, pt, m.proxy, req)
 		return err
 	})
 
@@ -261,6 +274,7 @@ func (m *Manager) ResolveStuck(ctx context.Context, e db.Environment) (db.EnvSta
 	}
 
 	if status == provider.StatusRunning {
+		m.route(ctx, p, e.ID)
 		err := db.MarkEnvironmentRunning(ctx, m.db, e.ID)
 		if errors.Is(err, db.ErrInvalidTransition) {
 			return "", nil
@@ -342,6 +356,8 @@ func (m *Manager) provision(ctx context.Context, p provider.Provider, id uuid.UU
 		return
 	}
 
+	m.route(ctx, p, id)
+
 	err := db.MarkEnvironmentRunning(ctx, m.db, id)
 	if errors.Is(err, db.ErrInvalidTransition) {
 		if err := p.Delete(ctx, id.String()); err != nil {
@@ -352,6 +368,26 @@ func (m *Manager) provision(ctx context.Context, p provider.Provider, id uuid.UU
 
 	if err != nil {
 		log.Printf("provision environment %s: %v", id, err)
+	}
+}
+
+func (m *Manager) route(ctx context.Context, p provider.Provider, id uuid.UUID) {
+	if m.proxy == nil {
+		return
+	}
+
+	addr, err := p.Address(ctx, id.String())
+	if err != nil {
+		log.Printf("route environment %s: %v", id, err)
+		return
+	}
+
+	if addr == "" {
+		return
+	}
+
+	if err := db.SetEnvironmentBackend(ctx, m.db, id, addr); err != nil {
+		log.Printf("route environment %s: %v", id, err)
 	}
 }
 
@@ -368,7 +404,7 @@ type reservation struct {
 	preempted []uuid.UUID
 }
 
-func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, req CreateRequest) (reservation, error) {
+func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, px *proxy.Proxy, req CreateRequest) (reservation, error) {
 	rank := priority(req.Type)
 	if rank == 0 {
 		return reservation{}, fmt.Errorf("%w: %q", ErrInvalidEnvType, req.Type)
@@ -446,6 +482,12 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, req CreateRequest
 
 	if err := db.ReserveCapacity(ctx, tx, pt, need); err != nil {
 		return reservation{}, err
+	}
+
+	if px != nil && len(req.Template.Workload.Ports) > 0 {
+		if err := db.SetEnvironmentEndpoint(ctx, tx, id, px.URL(id)); err != nil {
+			return reservation{}, err
+		}
 	}
 
 	e, err := db.GetEnvironment(ctx, tx, id)

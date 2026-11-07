@@ -34,6 +34,8 @@ func (f *fakeProvider) Status(ctx context.Context, id string) (provider.Status, 
 	return provider.StatusRunning, nil
 }
 
+func (f *fakeProvider) Address(ctx context.Context, id string) (string, error) { return "", nil }
+
 func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (string, error) {
 	return "", nil
 }

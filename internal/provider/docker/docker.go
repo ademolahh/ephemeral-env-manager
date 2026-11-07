@@ -18,20 +18,36 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
-const envLabel = "eem.env"
+const (
+	envLabel  = "eem.env"
+	portLabel = "eem.port"
+)
 
 var ErrUnlimitedResources = errors.New("cpu and ram limits must be at least 1, docker treats 0 as unlimited")
 
 type Docker struct {
-	cli *client.Client
+	cli   *client.Client
+	proxy string
 }
 
-func New() (*Docker, error) {
+type Option func(*Docker)
+
+func WithProxy(container string) Option {
+	return func(d *Docker) { d.proxy = container }
+}
+
+func New(opts ...Option) (*Docker, error) {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
-	return &Docker{cli: cli}, nil
+
+	d := &Docker{cli: cli}
+	for _, opt := range opts {
+		opt(d)
+	}
+
+	return d, nil
 }
 
 func (d *Docker) Ping(ctx context.Context) error {
@@ -72,6 +88,21 @@ func (d *Docker) Status(ctx context.Context, id string) (provider.Status, error)
 	return aggregateStatus(id, list.Items), nil
 }
 
+func (d *Docker) Address(ctx context.Context, id string) (string, error) {
+	name := workloadName(id)
+	res, err := d.cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("address env %s: %w", id, err)
+	}
+
+	port := res.Container.Config.Labels[portLabel]
+	if port == "" {
+		return "", nil
+	}
+
+	return name + ":" + port, nil
+}
+
 func (d *Docker) Exec(ctx context.Context, id string, cmd []string) (string, error) {
 	return "", nil
 }
@@ -88,13 +119,13 @@ func (d *Docker) List(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("list envs: list networks: %w", err)
 	}
 
-	seen := map[string]bool{}
+	seen := map[string]struct{}{}
 	for _, c := range containers.Items {
-		seen[c.Labels[envLabel]] = true
+		seen[c.Labels[envLabel]] = struct{}{}
 	}
 
 	for _, n := range networks.Items {
-		seen[n.Labels[envLabel]] = true
+		seen[n.Labels[envLabel]] = struct{}{}
 	}
 	delete(seen, "")
 
@@ -111,6 +142,13 @@ func (d *Docker) create(ctx context.Context, id, workload string, temp provider.
 		Labels:   labels,
 	}); err != nil {
 		return "", fmt.Errorf("create network: %w", err)
+	}
+
+	if d.proxy != "" {
+		_, err := d.cli.NetworkConnect(ctx, net, client.NetworkConnectOptions{Container: d.proxy})
+		if err != nil && !cerrdefs.IsPermissionDenied(err) {
+			return "", fmt.Errorf("connect proxy %s: %w", d.proxy, err)
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -151,11 +189,16 @@ func (d *Docker) create(ctx context.Context, id, workload string, temp provider.
 		ports[port] = struct{}{}
 	}
 
+	workloadLabels := maps.Clone(labels)
+	if len(temp.Workload.Ports) > 0 {
+		workloadLabels[portLabel] = strconv.Itoa(temp.Workload.Ports[0])
+	}
+
 	containerID, err := d.run(ctx, id+"-workload", net, "workload", &container.Config{
 		Image:        workload,
 		Env:          envList(temp.Workload.Env),
 		ExposedPorts: ports,
-		Labels:       labels,
+		Labels:       workloadLabels,
 	}, temp.Workload.Resources)
 	if err != nil {
 		return "", fmt.Errorf("workload: %w", err)
@@ -238,6 +281,10 @@ func (d *Docker) cleanup(ctx context.Context, id string) error {
 	}
 	wg.Wait()
 
+	if err := d.disconnectProxy(ctx, id); err != nil {
+		errs = append(errs, err)
+	}
+
 	if _, err := d.cli.NetworkRemove(ctx, networkName(id), client.NetworkRemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
 		errs = append(errs, fmt.Errorf("remove network: %w", err))
 	}
@@ -245,14 +292,38 @@ func (d *Docker) cleanup(ctx context.Context, id string) error {
 	return errors.Join(errs...)
 }
 
-func aggregateStatus(id string, containers []container.Summary) provider.Status {
-	workload := false
-	for _, c := range containers {
-		if slices.Contains(c.Names, "/eem-"+id+"-workload") {
-			workload = true
+func (d *Docker) disconnectProxy(ctx context.Context, id string) error {
+	if d.proxy == "" {
+		return nil
+	}
+
+	n, err := d.cli.NetworkInspect(ctx, networkName(id), client.NetworkInspectOptions{})
+	if cerrdefs.IsNotFound(err) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("inspect network: %w", err)
+	}
+
+	for _, c := range n.Network.Containers {
+		if c.Name != d.proxy {
+			continue
+		}
+
+		_, err := d.cli.NetworkDisconnect(ctx, networkName(id), client.NetworkDisconnectOptions{Container: d.proxy, Force: true})
+		if err != nil && !cerrdefs.IsNotFound(err) {
+			return fmt.Errorf("disconnect proxy %s: %w", d.proxy, err)
 		}
 	}
 
+	return nil
+}
+
+func aggregateStatus(id string, containers []container.Summary) provider.Status {
+	workload := slices.ContainsFunc(containers, func(c container.Summary) bool {
+		return slices.Contains(c.Names, "/"+workloadName(id))
+	})
 	if !workload {
 		return provider.StatusMissing
 	}
@@ -278,6 +349,10 @@ func aggregateStatus(id string, containers []container.Summary) provider.Status 
 	}
 
 	return status
+}
+
+func workloadName(id string) string {
+	return "eem-" + id + "-workload"
 }
 
 func networkName(id string) string {

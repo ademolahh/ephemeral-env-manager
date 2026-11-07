@@ -9,6 +9,9 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET}
+      PROXY_DOMAIN: ${PROXY_DOMAIN:-env.localhost}
+      PROXY_PUBLIC_PORT: ${PROXY_PUBLIC_PORT:-8000}
+      PROXY_CONTAINER: ${PROXY_CONTAINER:-eem-proxy}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
@@ -23,8 +26,29 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       WORKER_INTERVAL: 30s
+      PROXY_DOMAIN: ${PROXY_DOMAIN:-env.localhost}
+      PROXY_PUBLIC_PORT: ${PROXY_PUBLIC_PORT:-8000}
+      PROXY_CONTAINER: ${PROXY_CONTAINER:-eem-proxy}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  proxy:
+    build:
+      context: .
+      target: proxy
+    container_name: ${PROXY_CONTAINER:-eem-proxy}
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      PROXY_DOMAIN: ${PROXY_DOMAIN:-env.localhost}
+      PROXY_LISTEN_ADDR: 10.231.0.10:80
+    ports:
+      - "${PROXY_PUBLIC_PORT:-8000}:80"
+    networks:
+      edge:
+        ipv4_address: 10.231.0.10
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -55,11 +79,20 @@ services:
       - 5432:5432
     volumes:
       - pgdata:/var/lib/postgresql
+    networks:
+      - default
+      - edge
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 10.231.0.0/24
 
 volumes:
   pgdata:
