@@ -1,6 +1,20 @@
 package provider
 
-import "context"
+import (
+	"context"
+	"errors"
+	"strconv"
+)
+
+var ErrEmptyCommand = errors.New("command is empty")
+
+type ExitError struct {
+	Code int
+}
+
+func (e *ExitError) Error() string {
+	return "command exited with code " + strconv.Itoa(e.Code)
+}
 
 type Type string
 

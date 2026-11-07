@@ -20,7 +20,10 @@ import (
 )
 
 type fakeProvider struct {
-	calls []provider.Template
+	calls    []provider.Template
+	execOut  string
+	execErr  error
+	execCmds [][]string
 }
 
 func (f *fakeProvider) Create(ctx context.Context, id, workload string, temp provider.Template) (string, error) {
@@ -37,7 +40,8 @@ func (f *fakeProvider) Status(ctx context.Context, id string) (provider.Status, 
 func (f *fakeProvider) Address(ctx context.Context, id string) (string, error) { return "", nil }
 
 func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (string, error) {
-	return "", nil
+	f.execCmds = append(f.execCmds, cmd)
+	return f.execOut, f.execErr
 }
 
 func (f *fakeProvider) List(ctx context.Context) ([]string, error) { return nil, nil }

@@ -28,9 +28,13 @@ var (
 	ErrBudgetExpired       = errors.New("cost budget expired")
 	ErrBudgetExceeded      = errors.New("cost budget exceeded")
 	ErrCapacityExceeded    = errors.New("capacity pool exhausted")
+	ErrNotRunning          = errors.New("environment is not running")
 )
 
-const statusTimeout = 5 * time.Second
+const (
+	statusTimeout = 5 * time.Second
+	execTimeout   = 5 * time.Minute
+)
 
 var envTypes = []db.EnvType{db.EnvRegularTesting, db.EnvPRReview, db.EnvProdBug}
 
@@ -167,6 +171,40 @@ func (m *Manager) DeleteAny(ctx context.Context, id uuid.UUID) (db.Environment, 
 	}
 
 	return m.Remove(ctx, e)
+}
+
+func (m *Manager) Exec(ctx context.Context, caller db.AuthenticatedCaller, id uuid.UUID, cmd []string) (string, error) {
+	e, err := m.owned(ctx, caller, id)
+	if err != nil {
+		return "", fmt.Errorf("exec environment: %w", err)
+	}
+
+	return m.exec(ctx, e, cmd)
+}
+
+func (m *Manager) ExecAny(ctx context.Context, id uuid.UUID, cmd []string) (string, error) {
+	e, err := db.GetEnvironment(ctx, m.db, id)
+	if err != nil {
+		return "", fmt.Errorf("exec environment: %w", err)
+	}
+
+	return m.exec(ctx, e, cmd)
+}
+
+func (m *Manager) exec(ctx context.Context, e db.Environment, cmd []string) (string, error) {
+	if e.Status != db.EnvRunning {
+		return "", fmt.Errorf("exec environment %s: %w", e.ID, ErrNotRunning)
+	}
+
+	p, ok := m.providers[e.Provider]
+	if !ok {
+		return "", fmt.Errorf("exec environment %s on %s: %w", e.ID, e.Provider, ErrProviderUnavailable)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, execTimeout)
+	defer cancel()
+
+	return p.Exec(ctx, e.ID.String(), cmd)
 }
 
 func (m *Manager) owned(ctx context.Context, caller db.AuthenticatedCaller, id uuid.UUID) (db.Environment, error) {

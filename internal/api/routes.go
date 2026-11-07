@@ -20,6 +20,7 @@ func Routes(h *Handler) http.Handler {
 	mux.Handle("GET /envs", requireCaller(http.HandlerFunc(h.ListEnvs)))
 	mux.HandleFunc("GET /envs/{id}", h.GetEnv)
 	mux.HandleFunc("DELETE /envs/{id}", h.DeleteEnv)
+	mux.HandleFunc("POST /envs/{id}/exec", h.ExecEnv)
 
 	assets, _ := fs.Sub(webFiles, "web")
 	frontend := http.FileServer(http.FS(assets))

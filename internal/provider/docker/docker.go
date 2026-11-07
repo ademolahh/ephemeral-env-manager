@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
@@ -104,7 +106,58 @@ func (d *Docker) Address(ctx context.Context, id string) (string, error) {
 }
 
 func (d *Docker) Exec(ctx context.Context, id string, cmd []string) (string, error) {
-	return "", nil
+	if len(cmd) == 0 {
+		return "", fmt.Errorf("exec env %s: %w", id, provider.ErrEmptyCommand)
+	}
+
+	created, err := d.cli.ExecCreate(ctx, workloadName(id), client.ExecCreateOptions{
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("exec env %s: create: %w", id, err)
+	}
+
+	attached, err := d.cli.ExecAttach(ctx, created.ID, client.ExecAttachOptions{})
+	if err != nil {
+		return "", fmt.Errorf("exec env %s: attach: %w", id, err)
+	}
+	defer attached.Close()
+	defer context.AfterFunc(ctx, attached.Close)()
+
+	out := &cappedBuffer{max: maxExecOutput}
+	if _, err := stdcopy.StdCopy(out, out, attached.Reader); err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return out.String(), fmt.Errorf("exec env %s: read output: %w", id, err)
+	}
+
+	res, err := d.cli.ExecInspect(ctx, created.ID, client.ExecInspectOptions{})
+	if err != nil {
+		return out.String(), fmt.Errorf("exec env %s: inspect: %w", id, err)
+	}
+
+	if res.ExitCode != 0 {
+		return out.String(), fmt.Errorf("exec env %s: %w", id, &provider.ExitError{Code: res.ExitCode})
+	}
+
+	return out.String(), nil
+}
+
+const maxExecOutput = 1 << 20
+
+type cappedBuffer struct {
+	bytes.Buffer
+	max int
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if room := b.max - b.Len(); room > 0 {
+		b.Buffer.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
 }
 
 func (d *Docker) List(ctx context.Context) ([]string, error) {

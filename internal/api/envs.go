@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -214,6 +215,57 @@ func (h *Handler) DeleteEnv(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusAccepted
 	}
 	writeJSON(w, status, e)
+}
+
+type execRequest struct {
+	Cmd []string `json:"cmd"`
+}
+
+type execResponse struct {
+	Output   string `json:"output"`
+	ExitCode int    `json:"exit_code"`
+}
+
+func (h *Handler) ExecEnv(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid environment id")
+		return
+	}
+
+	var req execRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	if len(req.Cmd) == 0 || req.Cmd[0] == "" {
+		writeError(w, http.StatusBadRequest, "cmd is required")
+		return
+	}
+
+	var out string
+	if _, admin := adminFrom(r.Context()); admin {
+		out, err = h.envs.ExecAny(r.Context(), id, req.Cmd)
+	} else {
+		out, err = h.envs.Exec(r.Context(), callerFrom(r.Context()), id, req.Cmd)
+	}
+
+	if exit, ok := errors.AsType[*provider.ExitError](err); ok {
+		writeJSON(w, http.StatusOK, execResponse{Output: out, ExitCode: exit.Code})
+		return
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) {
+		writeError(w, http.StatusGatewayTimeout, "command timed out")
+		return
+	}
+
+	if err != nil {
+		writeServiceError(w, "exec environment", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, execResponse{Output: out})
 }
 
 func (t templateRequest) toTemplate() (provider.Template, error) {
