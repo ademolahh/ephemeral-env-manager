@@ -1,5 +1,3 @@
-// Generate an API key for an existing caller. Callers sign up with POST /callers.
-// Run with: DATABASE_URL=... go run ./scripts/generate_api_key.go -caller-id UUID
 package main
 
 import (
@@ -11,25 +9,32 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/auth"
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
+	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
 func main() {
-	callerFlag := flag.String("caller-id", "", "caller UUID to issue the key for")
+	callerFlag := flag.String("caller-id", "", "existing caller UUID; omit to create a new caller")
 	expiresIn := flag.Duration("expires-in", 30*24*time.Hour, "API key validity (for example, 720h)")
 	flag.Parse()
-	if flag.NArg() != 0 || *callerFlag == "" || *expiresIn <= 0 {
-		log.Fatal("usage: go run ./scripts/generate_api_key.go -caller-id UUID [-expires-in 720h]")
+	if flag.NArg() != 0 || *expiresIn <= 0 {
+		log.Fatal("usage: make api-key [ARGS=\"-caller-id UUID -expires-in 720h\"]")
 	}
 	if os.Getenv("DATABASE_URL") == "" {
 		log.Fatal("DATABASE_URL is required")
 	}
 
-	callerID, err := uuid.Parse(*callerFlag)
-	if err != nil || callerID == uuid.Nil {
-		log.Fatalf("invalid caller ID %q", *callerFlag)
+	var callerID uuid.UUID
+	if *callerFlag != "" {
+		id, err := uuid.Parse(*callerFlag)
+		if err != nil || id == uuid.Nil {
+			log.Fatalf("invalid caller ID %q", *callerFlag)
+		}
+		callerID = id
 	}
 
 	ctx := context.Background()
@@ -39,13 +44,29 @@ func main() {
 	}
 	defer pool.Close()
 
-	if _, err := db.LockCaller(ctx, pool, callerID); err != nil {
-		log.Fatal(err)
-	}
-
 	expiresAt := time.Now().Add(*expiresIn)
 	key, hash := auth.GenerateAPIKey()
-	if _, err := db.CreateAPIKey(ctx, pool, callerID, hash, expiresAt); err != nil {
+	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		if callerID == uuid.Nil {
+			id, err := db.CreateCaller(ctx, tx, db.NewCaller{
+				Role:            db.RoleUser,
+				PermittedEnv:    db.EnvRegularTesting,
+				Quota:           provider.Resources{CPUCore: 4, RAMGB: 16, DiskGB: 50},
+				CostBudgetTotal: decimal.NewFromInt(100),
+				BudgetExpiresAt: time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second),
+			})
+			if err != nil {
+				return err
+			}
+			callerID = id
+		} else if _, err := db.LockCaller(ctx, tx, callerID); err != nil {
+			return err
+		}
+
+		_, err := db.CreateAPIKey(ctx, tx, callerID, hash, expiresAt)
+		return err
+	})
+	if err != nil {
 		log.Fatal(err)
 	}
 
