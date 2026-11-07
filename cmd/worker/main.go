@@ -63,7 +63,7 @@ func main() {
 
 	envs := env.NewManager(pool, map[provider.Type]provider.Provider{provider.Docker: d}, envOpts...)
 
-	log.Printf("worker sweeping environments every %s", interval)
+	log.Printf("worker running each task every %s", interval)
 	worker.New(pool, envs, interval).Run(ctx)
 
 	log.Print("waiting for in-flight deletions")

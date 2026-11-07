@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
@@ -25,32 +26,49 @@ func New(q db.DBTX, envs *env.Manager, interval time.Duration) *Worker {
 	return &Worker{db: q, envs: envs, interval: interval, stuckAfter: stuckAfter}
 }
 
+type task struct {
+	name string
+	run  func(context.Context) error
+}
+
+func (w *Worker) tasks() []task {
+	return []task{
+		{"stop expired", func(ctx context.Context) error {
+			return w.stop(ctx, "expired", db.ListExpiredEnvironments)
+		}},
+		{"stop over budget", func(ctx context.Context) error {
+			return w.stop(ctx, "caller budget exhausted or expired", db.ListBudgetExhaustedEnvironments)
+		}},
+		{"stop missing", w.stopMissing},
+		{"resolve stuck", w.resolveStuck},
+		{"teardown deleting", w.teardownDeleting},
+		{"remove orphans", w.removeOrphans},
+	}
+}
+
 func (w *Worker) Run(ctx context.Context) {
-	t := time.NewTicker(w.interval)
-	defer t.Stop()
+	var wg sync.WaitGroup
+	for _, t := range w.tasks() {
+		wg.Go(func() { w.loop(ctx, t) })
+	}
+	wg.Wait()
+}
+
+func (w *Worker) loop(ctx context.Context, t task) {
+	tick := time.NewTicker(w.interval)
+	defer tick.Stop()
 
 	for {
-		if err := w.Sweep(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("sweep environments: %v", err)
+		if err := t.run(ctx); err != nil && ctx.Err() == nil {
+			log.Printf("%s: %v", t.name, err)
 		}
 
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-tick.C:
 		}
 	}
-}
-
-func (w *Worker) Sweep(ctx context.Context) error {
-	return errors.Join(
-		w.stop(ctx, "expired", db.ListExpiredEnvironments),
-		w.stop(ctx, "caller budget exhausted or expired", db.ListBudgetExhaustedEnvironments),
-		w.stopMissing(ctx),
-		w.resolveStuck(ctx),
-		w.teardownDeleting(ctx),
-		w.removeOrphans(ctx),
-	)
 }
 
 func (w *Worker) stop(ctx context.Context, reason string, list func(context.Context, db.DBTX) ([]db.Environment, error)) error {

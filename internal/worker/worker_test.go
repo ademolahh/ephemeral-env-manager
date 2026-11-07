@@ -25,6 +25,7 @@ type fakeProvider struct {
 	statusErr   error
 	deleteFails int
 	listed      []string
+	listing     chan struct{}
 }
 
 func (f *fakeProvider) Create(ctx context.Context, id, workload string, temp provider.Template) (string, error) {
@@ -70,6 +71,15 @@ func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (strin
 }
 
 func (f *fakeProvider) List(ctx context.Context) ([]string, error) {
+	if f.listing != nil {
+		select {
+		case f.listing <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.listed), nil
@@ -79,6 +89,14 @@ func (f *fakeProvider) deletedIDs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.deleted)
+}
+
+func (w *Worker) sweep(ctx context.Context) error {
+	var errs []error
+	for _, t := range w.tasks() {
+		errs = append(errs, t.run(ctx))
+	}
+	return errors.Join(errs...)
 }
 
 type fixture struct {
@@ -156,8 +174,8 @@ func TestSweepDeletesExpired(t *testing.T) {
 	expiredFailed := f.env(t, provider.Docker, db.EnvFailed, true)
 	expiredDeleted := f.env(t, provider.Docker, db.EnvDeleted, true)
 
-	if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
-		t.Fatalf("Sweep() error = %v", err)
+	if err := New(f.q, f.m, time.Minute).sweep(context.Background()); err != nil {
+		t.Fatalf("sweep() error = %v", err)
 	}
 	f.m.Wait()
 
@@ -186,8 +204,8 @@ func TestSweepNothingToRemove(t *testing.T) {
 	f := newFixture(t, dbtest.Tx(t))
 	live := f.env(t, provider.Docker, db.EnvRunning, false)
 
-	if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
-		t.Fatalf("Sweep() error = %v", err)
+	if err := New(f.q, f.m, time.Minute).sweep(context.Background()); err != nil {
+		t.Fatalf("sweep() error = %v", err)
 	}
 	f.m.Wait()
 
@@ -204,11 +222,11 @@ func TestSweepContinuesPastErrors(t *testing.T) {
 	unconfigured := f.env(t, provider.Cloud, db.EnvRunning, true)
 	docker := f.env(t, provider.Docker, db.EnvRunning, true)
 
-	err := New(f.q, f.m, time.Minute).Sweep(context.Background())
+	err := New(f.q, f.m, time.Minute).sweep(context.Background())
 	f.m.Wait()
 
 	if err == nil || !strings.Contains(err.Error(), unconfigured.String()) {
-		t.Errorf("Sweep() error = %v, want error naming %s", err, unconfigured)
+		t.Errorf("sweep() error = %v, want error naming %s", err, unconfigured)
 	}
 	if got := f.status(t, unconfigured); got != db.EnvRunning {
 		t.Errorf("unconfigured provider env status = %s, want %s", got, db.EnvRunning)
@@ -228,8 +246,8 @@ func TestSweepDeletesMissing(t *testing.T) {
 	f.fake.setStatus(unknown, provider.StatusUnknown)
 	f.fake.setStatus(stopped, provider.StatusStopped)
 
-	if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
-		t.Fatalf("Sweep() error = %v", err)
+	if err := New(f.q, f.m, time.Minute).sweep(context.Background()); err != nil {
+		t.Fatalf("sweep() error = %v", err)
 	}
 	f.m.Wait()
 
@@ -250,8 +268,8 @@ func TestSweepIgnoresMissingWhileProvisioning(t *testing.T) {
 	provisioning := f.env(t, provider.Docker, db.EnvProvisioning, false)
 	f.fake.setStatus(provisioning, provider.StatusMissing)
 
-	if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
-		t.Fatalf("Sweep() error = %v", err)
+	if err := New(f.q, f.m, time.Minute).sweep(context.Background()); err != nil {
+		t.Fatalf("sweep() error = %v", err)
 	}
 	f.m.Wait()
 
@@ -269,11 +287,11 @@ func TestSweepReportsStatusErrors(t *testing.T) {
 	expired := f.env(t, provider.Docker, db.EnvRunning, true)
 	f.fake.statusErr = errors.New("daemon unreachable")
 
-	err := New(f.q, f.m, time.Minute).Sweep(context.Background())
+	err := New(f.q, f.m, time.Minute).sweep(context.Background())
 	f.m.Wait()
 
 	if err == nil || !strings.Contains(err.Error(), live.String()) {
-		t.Errorf("Sweep() error = %v, want error naming %s", err, live)
+		t.Errorf("sweep() error = %v, want error naming %s", err, live)
 	}
 	if got := f.status(t, live); got != db.EnvRunning {
 		t.Errorf("live env status = %s, want %s", got, db.EnvRunning)
@@ -324,6 +342,42 @@ func TestRun(t *testing.T) {
 	f.m.Wait()
 }
 
+func TestRunBlockedTaskDoesNotStopOthers(t *testing.T) {
+	pool := dbtest.Pool(t)
+	f := newFixture(t, pool)
+	f.fake.listing = make(chan struct{}, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		New(pool, f.m, 20*time.Millisecond).Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-f.fake.listing:
+	case <-time.After(5 * time.Second):
+		t.Fatal("remove orphans never listed provider resources")
+	}
+
+	expired := f.env(t, provider.Docker, db.EnvRunning, true)
+	deadline := time.Now().Add(5 * time.Second)
+	for f.status(t, expired) != db.EnvDeleted && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := f.status(t, expired); got != db.EnvDeleted {
+		t.Errorf("expired env status = %s, want %s while remove orphans is blocked", got, db.EnvDeleted)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not return after cancel")
+	}
+	f.m.Wait()
+}
+
 func (f fixture) exec(t *testing.T, sql string, args ...any) {
 	t.Helper()
 	if _, err := f.q.Exec(context.Background(), sql, args...); err != nil {
@@ -361,8 +415,8 @@ func TestSweepStopsCallersOverBudget(t *testing.T) {
 			f.exec(t, `UPDATE environments SET caller_id = $2 WHERE id = $1`, other, f.otherCaller(t))
 			f.exec(t, overBudget, f.callerID)
 
-			if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
-				t.Fatalf("Sweep() error = %v", err)
+			if err := New(f.q, f.m, time.Minute).sweep(context.Background()); err != nil {
+				t.Fatalf("sweep() error = %v", err)
 			}
 
 			for id, want := range map[uuid.UUID]db.EnvStatus{
@@ -384,8 +438,8 @@ func TestSweepAllowsBudgetFullyReserved(t *testing.T) {
 	live := f.env(t, provider.Docker, db.EnvRunning, false)
 	f.exec(t, `UPDATE callers SET cost_used = 10, cost_budget_total = 10 WHERE id = $1`, f.callerID)
 
-	if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
-		t.Fatalf("Sweep() error = %v", err)
+	if err := New(f.q, f.m, time.Minute).sweep(context.Background()); err != nil {
+		t.Fatalf("sweep() error = %v", err)
 	}
 	if got := f.status(t, live); got != db.EnvRunning {
 		t.Errorf("status = %s, want %s when the budget is exactly used", got, db.EnvRunning)
@@ -404,8 +458,8 @@ func TestSweepResolvesStuckProvisioning(t *testing.T) {
 
 	w := New(f.q, f.m, time.Minute)
 	w.stuckAfter = 0
-	if err := w.Sweep(context.Background()); err != nil {
-		t.Fatalf("Sweep() error = %v", err)
+	if err := w.sweep(context.Background()); err != nil {
+		t.Fatalf("sweep() error = %v", err)
 	}
 
 	for id, want := range map[uuid.UUID]db.EnvStatus{
@@ -443,8 +497,8 @@ func TestSweepLeavesStuckProvisioningWhenProviderDown(t *testing.T) {
 
 	w := New(f.q, f.m, time.Minute)
 	w.stuckAfter = 0
-	if err := w.Sweep(context.Background()); err == nil || !strings.Contains(err.Error(), stuck.String()) {
-		t.Errorf("Sweep() error = %v, want error naming %s", err, stuck)
+	if err := w.sweep(context.Background()); err == nil || !strings.Contains(err.Error(), stuck.String()) {
+		t.Errorf("sweep() error = %v, want error naming %s", err, stuck)
 	}
 
 	if got := f.status(t, stuck); got != db.EnvProvisioning {
@@ -460,8 +514,8 @@ func TestSweepWaitsBeforeResolvingProvisioning(t *testing.T) {
 	fresh := f.env(t, provider.Docker, db.EnvProvisioning, false)
 	f.fake.setStatus(fresh, provider.StatusMissing)
 
-	if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
-		t.Fatalf("Sweep() error = %v", err)
+	if err := New(f.q, f.m, time.Minute).sweep(context.Background()); err != nil {
+		t.Fatalf("sweep() error = %v", err)
 	}
 	if got := f.status(t, fresh); got != db.EnvProvisioning {
 		t.Errorf("status = %s, want %s before the stuck threshold", got, db.EnvProvisioning)
@@ -474,15 +528,15 @@ func TestSweepRetriesDeleting(t *testing.T) {
 	f.fake.deleteFails = 1
 	w := New(f.q, f.m, time.Minute)
 
-	if err := w.Sweep(context.Background()); err == nil || !strings.Contains(err.Error(), deleting.String()) {
-		t.Errorf("first Sweep() error = %v, want error naming %s", err, deleting)
+	if err := w.sweep(context.Background()); err == nil || !strings.Contains(err.Error(), deleting.String()) {
+		t.Errorf("first sweep() error = %v, want error naming %s", err, deleting)
 	}
 	if got := f.status(t, deleting); got != db.EnvDeleting {
 		t.Fatalf("status after failed delete = %s, want %s", got, db.EnvDeleting)
 	}
 
-	if err := w.Sweep(context.Background()); err != nil {
-		t.Fatalf("second Sweep() error = %v", err)
+	if err := w.sweep(context.Background()); err != nil {
+		t.Fatalf("second sweep() error = %v", err)
 	}
 	if got := f.status(t, deleting); got != db.EnvDeleted {
 		t.Errorf("status after retry = %s, want %s", got, db.EnvDeleted)
@@ -498,8 +552,8 @@ func TestSweepRemovesOrphans(t *testing.T) {
 	unknown := uuid.NewString()
 	f.fake.listed = []string{running.String(), provisioning.String(), failed.String(), deleted.String(), unknown, "not-an-env-id"}
 
-	if err := New(f.q, f.m, time.Minute).Sweep(context.Background()); err != nil {
-		t.Fatalf("Sweep() error = %v", err)
+	if err := New(f.q, f.m, time.Minute).sweep(context.Background()); err != nil {
+		t.Fatalf("sweep() error = %v", err)
 	}
 
 	got := f.fake.deletedIDs()
