@@ -10,7 +10,6 @@ require (
 	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.2
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	github.com/shopspring/decimal v1.6.0
 	golang.org/x/crypto v0.55.0
 )
 

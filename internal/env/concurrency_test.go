@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
@@ -58,6 +57,10 @@ func (s *safeProvider) Create(ctx context.Context, id, workload string, temp pro
 	return "container-" + id, nil
 }
 
+func (s *safeProvider) Status(ctx context.Context, id string) (provider.Status, error) {
+	return provider.StatusRunning, nil
+}
+
 func seedPool(t *testing.T, pool *pgxpool.Pool, capacity provider.Resources) *Manager {
 	t.Helper()
 	ctx := context.Background()
@@ -70,13 +73,13 @@ func seedPool(t *testing.T, pool *pgxpool.Pool, capacity provider.Resources) *Ma
 	return NewManager(pool, map[provider.Type]provider.Provider{provider.Docker: &safeProvider{}})
 }
 
-func seedCaller(t *testing.T, pool *pgxpool.Pool, quota provider.Resources, budget string) uuid.UUID {
+func seedCaller(t *testing.T, pool *pgxpool.Pool, quota provider.Resources, budget int64) uuid.UUID {
 	t.Helper()
 	id, err := db.CreateCaller(context.Background(), pool, db.NewCaller{
 		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvRegularTesting,
 		Quota:           quota,
-		CostBudgetTotal: decimal.RequireFromString(budget),
+		CostBudgetTotal: budget,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {
@@ -88,7 +91,7 @@ func seedCaller(t *testing.T, pool *pgxpool.Pool, quota provider.Resources, budg
 func TestConcurrentCreatesRespectQuota(t *testing.T) {
 	pool := dbtest.Pool(t)
 	m := seedPool(t, pool, cpu(1000))
-	callerID := seedCaller(t, pool, cpu(3), "1000")
+	callerID := seedCaller(t, pool, cpu(3), 100000)
 
 	callers := make([]uuid.UUID, 12)
 	for i := range callers {
@@ -109,7 +112,7 @@ func TestConcurrentCreatesRespectQuota(t *testing.T) {
 func TestConcurrentCreatesRespectBudget(t *testing.T) {
 	pool := dbtest.Pool(t)
 	m := seedPool(t, pool, cpu(1000))
-	callerID := seedCaller(t, pool, cpu(1000), "0.012144")
+	callerID := seedCaller(t, pool, cpu(1000), 3)
 
 	callers := make([]uuid.UUID, 12)
 	for i := range callers {
@@ -133,7 +136,7 @@ func TestConcurrentCreatesRespectCapacity(t *testing.T) {
 
 	callers := make([]uuid.UUID, 12)
 	for i := range callers {
-		callers[i] = seedCaller(t, pool, cpu(1000), "1000")
+		callers[i] = seedCaller(t, pool, cpu(1000), 100000)
 	}
 	ok, errs := concurrentCreates(t, m, callers, cpu(1))
 

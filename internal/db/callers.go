@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
@@ -24,24 +23,28 @@ type NewCaller struct {
 	Role            Role
 	PermittedEnv    EnvType
 	Quota           provider.Resources
-	CostBudgetTotal decimal.Decimal
+	CostBudgetTotal int64
 	BudgetExpiresAt time.Time
 }
 
 type CallerLimits struct {
+	Role            Role
 	PermittedEnv    EnvType
 	Quota           provider.Resources
-	CostBudgetTotal decimal.Decimal
-	CostUsed        decimal.Decimal
+	CostBudgetTotal int64
+	CostUsed        int64
+	ProdBugCost     int64
+	ProdBugCostCap  int64
 	BudgetSetAt     time.Time
 	BudgetExpired   bool
 }
 
 type CallerBudget struct {
 	Quota           provider.Resources
-	CostBudgetTotal decimal.Decimal
-	CostUsed        decimal.Decimal
-	ProdBugCost     decimal.Decimal
+	CostBudgetTotal int64
+	CostUsed        int64
+	ProdBugCost     int64
+	ProdBugCostCap  int64
 	BudgetSetAt     time.Time
 	BudgetExpiresAt time.Time
 }
@@ -50,10 +53,10 @@ func GetCallerBudget(ctx context.Context, q DBTX, id uuid.UUID) (CallerBudget, e
 	var b CallerBudget
 	err := q.QueryRow(ctx, `
 	SELECT quota_cpu_cores, quota_ram_gb, quota_disk_gb,
-			cost_budget_total, cost_used, prod_bug_cost, budget_set_at, budget_expires_at
+			cost_budget_total, cost_used, prod_bug_cost, prod_bug_cost_cap, budget_set_at, budget_expires_at
 		FROM callers WHERE id = $1`, id,
 	).Scan(&b.Quota.CPUCore, &b.Quota.RAMGB, &b.Quota.DiskGB,
-		&b.CostBudgetTotal, &b.CostUsed, &b.ProdBugCost, &b.BudgetSetAt, &b.BudgetExpiresAt)
+		&b.CostBudgetTotal, &b.CostUsed, &b.ProdBugCost, &b.ProdBugCostCap, &b.BudgetSetAt, &b.BudgetExpiresAt)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return CallerBudget{}, fmt.Errorf("get caller budget %s: %w", id, ErrCallerNotFound)
@@ -88,7 +91,7 @@ func CreateCaller(ctx context.Context, q DBTX, c NewCaller) (uuid.UUID, error) {
 	return id, nil
 }
 
-func SetCallerBudget(ctx context.Context, q DBTX, id uuid.UUID, quota provider.Resources, costBudget decimal.Decimal, expiresAt time.Time) error {
+func SetCallerBudget(ctx context.Context, q DBTX, id uuid.UUID, quota provider.Resources, costBudget int64, expiresAt time.Time) error {
 	tag, err := q.Exec(ctx, `
 		UPDATE callers SET
 			quota_cpu_cores   = $2,
@@ -105,6 +108,23 @@ func SetCallerBudget(ctx context.Context, q DBTX, id uuid.UUID, quota provider.R
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("set caller budget %s: %w", id, ErrCallerNotFound)
+	}
+	return nil
+}
+
+func SetCallerPermission(ctx context.Context, q DBTX, id uuid.UUID, permitted EnvType, prodBugCostCap int64) error {
+	tag, err := q.Exec(ctx, `
+		UPDATE callers SET
+			permitted_env     = $2,
+			prod_bug_cost_cap = $3
+		WHERE id = $1`,
+		id, permitted, prodBugCostCap,
+	)
+	if err != nil {
+		return fmt.Errorf("set caller permission %s: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("set caller permission %s: %w", id, ErrCallerNotFound)
 	}
 	return nil
 }
@@ -129,13 +149,15 @@ func SetCallerGithub(ctx context.Context, q DBTX, id uuid.UUID, githubLogin, git
 func LockCaller(ctx context.Context, q DBTX, id uuid.UUID) (CallerLimits, error) {
 	var c CallerLimits
 	err := q.QueryRow(ctx, `
-		SELECT permitted_env, quota_cpu_cores, quota_ram_gb, quota_disk_gb,
-			cost_budget_total, cost_used, budget_set_at, budget_expires_at <= now()
+		SELECT role, permitted_env, quota_cpu_cores, quota_ram_gb, quota_disk_gb,
+			cost_budget_total, cost_used, prod_bug_cost, prod_bug_cost_cap,
+			budget_set_at, budget_expires_at <= now()
 		FROM callers WHERE id = $1
 		FOR UPDATE`, id,
 	).Scan(
-		&c.PermittedEnv, &c.Quota.CPUCore, &c.Quota.RAMGB, &c.Quota.DiskGB,
-		&c.CostBudgetTotal, &c.CostUsed, &c.BudgetSetAt, &c.BudgetExpired,
+		&c.Role, &c.PermittedEnv, &c.Quota.CPUCore, &c.Quota.RAMGB, &c.Quota.DiskGB,
+		&c.CostBudgetTotal, &c.CostUsed, &c.ProdBugCost, &c.ProdBugCostCap,
+		&c.BudgetSetAt, &c.BudgetExpired,
 	)
 
 	if errors.Is(err, pgx.ErrNoRows) {

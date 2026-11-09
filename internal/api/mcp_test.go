@@ -48,7 +48,7 @@ func call(t *testing.T, s server, session *mcp.ClientSession, name string, args 
 	if err != nil {
 		t.Fatalf("CallTool(%s) error = %v", name, err)
 	}
-	s.m.Wait()
+	s.settle(t)
 
 	if out != nil && !res.IsError {
 		b, err := json.Marshal(res.StructuredContent)

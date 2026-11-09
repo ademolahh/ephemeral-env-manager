@@ -2,8 +2,6 @@ package provider
 
 import (
 	"testing"
-
-	"github.com/shopspring/decimal"
 )
 
 var dashboard = Template{
@@ -15,9 +13,9 @@ var dashboard = Template{
 }
 
 var dockerPrices = Prices{
-	CPUCore: decimal.RequireFromString("0.004048"),
-	RAMGB:   decimal.RequireFromString("0.004445"),
-	DiskGB:  decimal.RequireFromString("0.00011"),
+	CPUCore: 4048,
+	RAMGB:   4445,
+	DiskGB:  110,
 }
 
 func TestTotalResources(t *testing.T) {
@@ -66,39 +64,38 @@ func TestHourlyCost(t *testing.T) {
 		name   string
 		tpl    Template
 		prices Prices
-		want   string
+		want   int64
 	}{
 		{
 			name:   "empty template",
 			tpl:    Template{},
 			prices: dockerPrices,
-			want:   "0",
+			want:   0,
 		},
 		{
 			name:   "zero prices",
 			tpl:    dashboard,
 			prices: Prices{},
-			want:   "0",
+			want:   0,
 		},
 		{
 			name:   "workload only",
 			tpl:    Template{Workload: Workload{Resources: Resources{CPUCore: 1, RAMGB: 4, DiskGB: 10}}},
 			prices: dockerPrices,
-			want:   "0.022928",
+			want:   22928,
 		},
 		{
 			name:   "workload and services",
 			tpl:    dashboard,
 			prices: dockerPrices,
-			want:   "0.054569",
+			want:   54569,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			want := decimal.RequireFromString(tt.want)
-			if got := tt.tpl.HourlyCost(tt.prices); !got.Equal(want) {
-				t.Errorf("HourlyCost() = %s, want %s", got, want)
+			if got := tt.tpl.HourlyCost(tt.prices); got != tt.want {
+				t.Errorf("HourlyCost() = %d, want %d", got, tt.want)
 			}
 		})
 	}

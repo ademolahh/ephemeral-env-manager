@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
@@ -20,7 +19,7 @@ type callerRow struct {
 	Role            string
 	PermittedEnv    string
 	Quota           provider.Resources
-	CostBudgetTotal string
+	CostBudgetTotal int64
 	BudgetExpiresAt time.Time
 	BudgetSetAt     time.Time
 }
@@ -31,7 +30,7 @@ func getCaller(t *testing.T, tx pgx.Tx, id uuid.UUID) callerRow {
 	err := tx.QueryRow(context.Background(), `
 		SELECT github_login, github_id, role::text, permitted_env::text,
 			quota_cpu_cores, quota_ram_gb, quota_disk_gb,
-			cost_budget_total::text, budget_expires_at, budget_set_at
+			cost_budget_total, budget_expires_at, budget_set_at
 		FROM callers WHERE id = $1`, id,
 	).Scan(
 		&r.GithubLogin, &r.GithubID, &r.Role, &r.PermittedEnv,
@@ -51,7 +50,7 @@ func newCaller() NewCaller {
 		Role:            RoleUser,
 		PermittedEnv:    EnvPRReview,
 		Quota:           provider.Resources{CPUCore: 4, RAMGB: 16, DiskGB: 50},
-		CostBudgetTotal: decimal.RequireFromString("12.345"),
+		CostBudgetTotal: 1234,
 		BudgetExpiresAt: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
 }
@@ -84,8 +83,8 @@ func TestCreateCaller(t *testing.T) {
 	if got.Quota != c.Quota {
 		t.Errorf("quota = %+v, want %+v", got.Quota, c.Quota)
 	}
-	if got.CostBudgetTotal != c.CostBudgetTotal.String() {
-		t.Errorf("cost_budget_total = %s, want %s", got.CostBudgetTotal, c.CostBudgetTotal)
+	if got.CostBudgetTotal != c.CostBudgetTotal {
+		t.Errorf("cost_budget_total = %d, want %d", got.CostBudgetTotal, c.CostBudgetTotal)
 	}
 	if !got.BudgetExpiresAt.Equal(c.BudgetExpiresAt) {
 		t.Errorf("budget_expires_at = %v, want %v", got.BudgetExpiresAt, c.BudgetExpiresAt)
@@ -140,7 +139,7 @@ func TestCreateCallerErrors(t *testing.T) {
 		},
 		{
 			name:   "negative cost budget",
-			mutate: func(c *NewCaller) { c.CostBudgetTotal = decimal.RequireFromString("-0.01") },
+			mutate: func(c *NewCaller) { c.CostBudgetTotal = -1 },
 			code:   "23514",
 		},
 		{
@@ -213,7 +212,7 @@ func TestSetCallerBudget(t *testing.T) {
 	}
 
 	quota := provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100}
-	budget := decimal.RequireFromString("99.99")
+	budget := int64(9999)
 	expires := time.Date(2031, 6, 7, 8, 9, 10, 0, time.UTC)
 	if err := SetCallerBudget(ctx, tx, id, quota, budget, expires); err != nil {
 		t.Fatalf("SetCallerBudget() error = %v", err)
@@ -223,8 +222,8 @@ func TestSetCallerBudget(t *testing.T) {
 	if got.Quota != quota {
 		t.Errorf("quota = %+v, want %+v", got.Quota, quota)
 	}
-	if got.CostBudgetTotal != budget.String() {
-		t.Errorf("cost_budget_total = %s, want %s", got.CostBudgetTotal, budget)
+	if got.CostBudgetTotal != budget {
+		t.Errorf("cost_budget_total = %d, want %d", got.CostBudgetTotal, budget)
 	}
 	if !got.BudgetExpiresAt.Equal(expires) {
 		t.Errorf("budget_expires_at = %v, want %v", got.BudgetExpiresAt, expires)
@@ -244,7 +243,7 @@ func TestSetCallerBudget(t *testing.T) {
 
 func TestSetCallerBudgetNotFound(t *testing.T) {
 	tx := testTx(t)
-	err := SetCallerBudget(context.Background(), tx, uuid.New(), provider.Resources{}, decimal.Zero, time.Now())
+	err := SetCallerBudget(context.Background(), tx, uuid.New(), provider.Resources{}, 0, time.Now())
 	if !errors.Is(err, ErrCallerNotFound) {
 		t.Errorf("SetCallerBudget() error = %v, want ErrCallerNotFound", err)
 	}
@@ -258,7 +257,7 @@ func TestSetCallerBudgetInvalid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCaller() error = %v", err)
 	}
-	err = SetCallerBudget(ctx, tx, id, provider.Resources{CPUCore: -1}, decimal.Zero, time.Now())
+	err = SetCallerBudget(ctx, tx, id, provider.Resources{CPUCore: -1}, 0, time.Now())
 	if errors.Is(err, ErrCallerNotFound) {
 		t.Fatalf("SetCallerBudget() error = %v, want check violation", err)
 	}

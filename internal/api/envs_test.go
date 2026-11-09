@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/auth"
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
@@ -58,9 +57,9 @@ func newServer(t *testing.T) server {
 	tx := dbtest.Tx(t)
 	ctx := context.Background()
 	if err := db.SetHourlyPrices(ctx, tx, provider.Docker, provider.Prices{
-		CPUCore: decimal.RequireFromString("0.004048"),
-		RAMGB:   decimal.RequireFromString("0.004445"),
-		DiskGB:  decimal.RequireFromString("0.00011"),
+		CPUCore: 4048,
+		RAMGB:   4445,
+		DiskGB:  110,
 	}); err != nil {
 		t.Fatalf("SetHourlyPrices() error = %v", err)
 	}
@@ -79,7 +78,7 @@ func (s server) apiKey(t *testing.T, permitted db.EnvType, quota provider.Resour
 		Role:            db.RoleUser,
 		PermittedEnv:    permitted,
 		Quota:           quota,
-		CostBudgetTotal: decimal.RequireFromString("100"),
+		CostBudgetTotal: 10000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {
@@ -103,7 +102,7 @@ func (s server) post(t *testing.T, key, body string, headers map[string]string) 
 	}
 	rec := httptest.NewRecorder()
 	s.handler.ServeHTTP(rec, req)
-	s.m.Wait()
+	s.settle(t)
 	return rec
 }
 
@@ -189,8 +188,8 @@ func TestCreateEnv(t *testing.T) {
 	if want := (provider.Resources{CPUCore: 3, RAMGB: 9, DiskGB: 22}); got.Resources != want {
 		t.Errorf("resources = %+v, want %+v", got.Resources, want)
 	}
-	if want := decimal.RequireFromString("0.054569"); !got.HourlyRate.Equal(want) {
-		t.Errorf("hourly_rate = %s, want %s", got.HourlyRate, want)
+	if want := int64(54569); got.HourlyRate != want {
+		t.Errorf("hourly_rate = %d, want %d", got.HourlyRate, want)
 	}
 	if got.TemplateName != "clear-dashboard" || got.TemplateVersion != "v1" {
 		t.Errorf("template = %s/%s, want clear-dashboard/v1", got.TemplateName, got.TemplateVersion)
@@ -256,7 +255,7 @@ func TestCreateEnvUnauthorized(t *testing.T) {
 		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvRegularTesting,
 		Quota:           provider.Resources{CPUCore: 10},
-		CostBudgetTotal: decimal.RequireFromString("100"),
+		CostBudgetTotal: 10000,
 		BudgetExpiresAt: time.Now().Add(time.Hour),
 	})
 	if err != nil {
@@ -498,4 +497,9 @@ func TestCreateEnvInternalErrorHidesDetails(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "template_name") {
 		t.Errorf("body = %s, leaks database error", rec.Body)
 	}
+}
+
+func (s server) settle(t *testing.T) {
+	t.Helper()
+	s.m.WaitReady()
 }

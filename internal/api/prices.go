@@ -4,16 +4,14 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/shopspring/decimal"
-
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
 type setPricesRequest struct {
-	CPUCore *decimal.Decimal `json:"cpu_core"`
-	RAMGB   *decimal.Decimal `json:"ram_gb"`
-	DiskGB  *decimal.Decimal `json:"disk_gb"`
+	CPUCore *int64 `json:"cpu_core"`
+	RAMGB   *int64 `json:"ram_gb"`
+	DiskGB  *int64 `json:"disk_gb"`
 }
 
 func (h *Handler) SetPrices(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +44,7 @@ func (r setPricesRequest) validate() error {
 		return errors.New("cpu_core, ram_gb and disk_gb are required")
 	}
 
-	if r.CPUCore.IsNegative() || r.RAMGB.IsNegative() || r.DiskGB.IsNegative() {
+	if *r.CPUCore < 0 || *r.RAMGB < 0 || *r.DiskGB < 0 {
 		return errors.New("prices must not be negative")
 	}
 

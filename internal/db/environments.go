@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
@@ -30,7 +29,7 @@ type Environment struct {
 	Endpoint        *string            `json:"endpoint"`
 	Backend         *string            `json:"-"`
 	Resources       provider.Resources `json:"resources"`
-	HourlyRate      decimal.Decimal    `json:"hourly_rate"`
+	HourlyRate      int64              `json:"hourly_rate"`
 	CallerID        uuid.UUID          `json:"-"`
 	FailureReason   *string            `json:"failure_reason,omitempty"`
 	TemplateName    string             `json:"template_name"`
@@ -43,12 +42,12 @@ type NewEnvironment struct {
 	Type            EnvType
 	Provider        provider.Type
 	Resources       provider.Resources
-	HourlyRate      decimal.Decimal
+	HourlyRate      int64
 	TTL             time.Duration
 	TemplateName    string
 	TemplateVersion string
 	IdempotencyKey  *string
-	EstimatedCost   decimal.Decimal
+	EstimatedCost   int64
 }
 
 const environmentColumns = `
@@ -82,7 +81,7 @@ func CreateEnvironment(ctx context.Context, q DBTX, e NewEnvironment) (uuid.UUID
 			estimated_cost, reserved_cost
 		)
 		VALUES ($1, now() + make_interval(secs => $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-			$13::numeric, CASE WHEN $3::env_type = 'PROD_BUG' THEN 0 ELSE $13::numeric END)`,
+			$13::bigint, CASE WHEN $3::env_type = 'PROD_BUG' THEN 0 ELSE $13::bigint END)`,
 		id, e.TTL.Seconds(), e.Type, e.Provider,
 		e.Resources.CPUCore, e.Resources.RAMGB, e.Resources.DiskGB, e.HourlyRate,
 		e.CallerID, e.TemplateName, e.TemplateVersion, e.IdempotencyKey, e.EstimatedCost,
@@ -139,10 +138,6 @@ func SetEnvironmentEndpoint(ctx context.Context, q DBTX, id uuid.UUID, endpoint 
 	return setField(ctx, q, id, "endpoint", `UPDATE environments SET endpoint = $2 WHERE id = $1`, endpoint)
 }
 
-func SetEnvironmentBackend(ctx context.Context, q DBTX, id uuid.UUID, backend string) error {
-	return setField(ctx, q, id, "backend", `UPDATE environments SET backend = $2 WHERE id = $1`, backend)
-}
-
 func setField(ctx context.Context, q DBTX, id uuid.UUID, field, query string, value any) error {
 	tag, err := q.Exec(ctx, query, id, value)
 	if err != nil {
@@ -172,8 +167,19 @@ func RouteBackend(ctx context.Context, q DBTX, id uuid.UUID) (string, error) {
 	return backend, nil
 }
 
-func MarkEnvironmentRunning(ctx context.Context, q DBTX, id uuid.UUID) error {
-	return setStatus(ctx, q, id, EnvRunning, nil, false, false, EnvProvisioning)
+func MarkEnvironmentRunning(ctx context.Context, q DBTX, id uuid.UUID, backend string) error {
+	tag, err := q.Exec(ctx, `
+		UPDATE environments SET status = 'RUNNING', backend = NULLIF($2, '')
+		WHERE id = $1 AND status = 'PROVISIONING'`, id, backend)
+	if err != nil {
+		return fmt.Errorf("set environment %s to %s: %w", id, EnvRunning, err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return transitionError(ctx, q, id, EnvRunning)
+	}
+
+	return nil
 }
 
 func MarkEnvironmentFailed(ctx context.Context, q DBTX, id uuid.UUID, reason string) error {
@@ -229,8 +235,8 @@ func updateStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reaso
 				status         = $2::env_status,
 				failure_reason = COALESCE($3, failure_reason),
 				deleted_at     = CASE WHEN $2::env_status = 'DELETED' THEN now() ELSE deleted_at END,
-				charged_cost   = CASE WHEN $6 THEN LEAST(estimated_cost,
-					hourly_rate * GREATEST(0, extract(epoch FROM LEAST(now(), expires_at) - created_at)) / 3600)
+				charged_cost   = CASE WHEN $6 THEN LEAST(estimated_cost, round(
+					hourly_rate * GREATEST(0, extract(epoch FROM LEAST(now(), expires_at) - created_at)) / 36000000)::bigint)
 					ELSE charged_cost END
 			WHERE id = $1 AND status::text = ANY($4)
 			RETURNING provider, cpu_cores, ram_gb, disk_gb, caller_id, type, estimated_cost, reserved_cost, charged_cost
@@ -262,8 +268,12 @@ func updateStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reaso
 		return nil
 	}
 
+	return transitionError(ctx, q, id, to)
+}
+
+func transitionError(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus) error {
 	var current EnvStatus
-	err = q.QueryRow(ctx, `SELECT status FROM environments WHERE id = $1`, id).Scan(&current)
+	err := q.QueryRow(ctx, `SELECT status FROM environments WHERE id = $1`, id).Scan(&current)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("set environment %s to %s: %w", id, to, ErrEnvNotFound)
 	}

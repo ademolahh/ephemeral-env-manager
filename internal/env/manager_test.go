@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
@@ -36,6 +35,9 @@ type fakeProvider struct {
 	status      provider.Status
 	statusErr   error
 	statusCalls int
+	ready       []provider.Status
+	starting    map[string]bool
+	readyCalls  int
 	onCreate    func()
 	calls       []createCall
 	deleted     []string
@@ -53,6 +55,10 @@ func (f *fakeProvider) Create(ctx context.Context, id, workload string, temp pro
 	if f.err != nil {
 		return "", f.err
 	}
+	if f.starting == nil {
+		f.starting = map[string]bool{}
+	}
+	f.starting[id] = true
 	return "container-" + id, nil
 }
 
@@ -66,6 +72,20 @@ func (f *fakeProvider) Delete(ctx context.Context, id string) error {
 func (f *fakeProvider) Status(ctx context.Context, id string) (provider.Status, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.starting[id] {
+		f.readyCalls++
+		s := provider.StatusRunning
+		if len(f.ready) > 0 {
+			s = f.ready[0]
+		}
+		if len(f.ready) > 1 {
+			f.ready = f.ready[1:]
+		}
+		if s == provider.StatusRunning {
+			delete(f.starting, id)
+		}
+		return s, nil
+	}
 	f.statusCalls++
 	return f.status, f.statusErr
 }
@@ -83,9 +103,9 @@ func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (strin
 func (f *fakeProvider) List(ctx context.Context) ([]string, error) { return nil, nil }
 
 var dockerPrices = provider.Prices{
-	CPUCore: decimal.RequireFromString("0.004048"),
-	RAMGB:   decimal.RequireFromString("0.004445"),
-	DiskGB:  decimal.RequireFromString("0.00011"),
+	CPUCore: 4048,
+	RAMGB:   4445,
+	DiskGB:  110,
 }
 
 var dashboard = provider.Template{
@@ -115,7 +135,7 @@ func setup(t *testing.T) (pgx.Tx, uuid.UUID) {
 		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvRegularTesting,
 		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
-		CostBudgetTotal: decimal.RequireFromString("10"),
+		CostBudgetTotal: 1000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {
@@ -160,7 +180,7 @@ func TestCreate(t *testing.T) {
 	if created.Status != db.EnvProvisioning {
 		t.Errorf("Create() status = %s, want %s", created.Status, db.EnvProvisioning)
 	}
-	m.Wait()
+	m.WaitReady()
 	id := created.ID
 
 	if len(fake.calls) != 1 {
@@ -196,8 +216,8 @@ func TestCreate(t *testing.T) {
 	if want := (provider.Resources{CPUCore: 3, RAMGB: 9, DiskGB: 22}); env.Resources != want {
 		t.Errorf("resources = %+v, want %+v", env.Resources, want)
 	}
-	if want := dashboard.HourlyCost(dockerPrices); !env.HourlyRate.Equal(want) {
-		t.Errorf("hourly_rate = %s, want %s", env.HourlyRate, want)
+	if want := dashboard.HourlyCost(dockerPrices); env.HourlyRate != want {
+		t.Errorf("hourly_rate = %d, want %d", env.HourlyRate, want)
 	}
 	if env.TemplateName != "clear-dashboard" || env.TemplateVersion != "v1" {
 		t.Errorf("template = %s/%s, want clear-dashboard/v1", env.TemplateName, env.TemplateVersion)
@@ -213,7 +233,7 @@ func TestCreate(t *testing.T) {
 func TestCreateExplicitProvider(t *testing.T) {
 	tx, callerID := setup(t)
 	ctx := context.Background()
-	cloudPrices := provider.Prices{CPUCore: decimal.RequireFromString("0.05"), RAMGB: decimal.Zero, DiskGB: decimal.Zero}
+	cloudPrices := provider.Prices{CPUCore: 50000}
 	if err := db.SetHourlyPrices(ctx, tx, provider.Cloud, cloudPrices); err != nil {
 		t.Fatalf("SetHourlyPrices() error = %v", err)
 	}
@@ -234,7 +254,7 @@ func TestCreateExplicitProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.Wait()
+	m.WaitReady()
 	id := created.ID
 	if len(docker.calls) != 0 || len(cloud.calls) != 1 {
 		t.Errorf("provider calls docker=%d cloud=%d, want 0 and 1", len(docker.calls), len(cloud.calls))
@@ -247,8 +267,8 @@ func TestCreateExplicitProvider(t *testing.T) {
 	if env.Provider != provider.Cloud {
 		t.Errorf("provider = %s, want %s", env.Provider, provider.Cloud)
 	}
-	if want := dashboard.HourlyCost(cloudPrices); !env.HourlyRate.Equal(want) {
-		t.Errorf("hourly_rate = %s, want %s", env.HourlyRate, want)
+	if want := dashboard.HourlyCost(cloudPrices); env.HourlyRate != want {
+		t.Errorf("hourly_rate = %d, want %d", env.HourlyRate, want)
 	}
 }
 
@@ -267,7 +287,7 @@ func TestCreateProviderFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v, want nil (provisioning is async)", err)
 	}
-	m.Wait()
+	m.WaitReady()
 
 	env, err := db.GetEnvironment(ctx, tx, created.ID)
 	if err != nil {
@@ -300,7 +320,7 @@ func TestCreateProviderPanics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.Wait()
+	m.WaitReady()
 
 	env, err := db.GetEnvironment(context.Background(), tx, created.ID)
 	if err != nil {
@@ -335,7 +355,7 @@ func TestCreateReturnsBeforeProvisioning(t *testing.T) {
 	}
 	cancel()
 	close(release)
-	m.Wait()
+	m.WaitReady()
 
 	if len(fake.calls) != 1 || fake.calls[0].ctxErr != nil {
 		t.Fatalf("provider calls = %+v, want one call with live context", fake.calls)
@@ -352,7 +372,7 @@ func TestCreateReturnsBeforeProvisioning(t *testing.T) {
 func TestCreateIdempotent(t *testing.T) {
 	tx, callerID := setup(t)
 	ctx := context.Background()
-	if err := db.SetCallerBudget(ctx, tx, callerID, provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000}, decimal.RequireFromString("10"), time.Now().Add(24*time.Hour)); err != nil {
+	if err := db.SetCallerBudget(ctx, tx, callerID, provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000}, 1000, time.Now().Add(24*time.Hour)); err != nil {
 		t.Fatalf("SetCallerBudget() error = %v", err)
 	}
 	fake := &fakeProvider{}
@@ -369,13 +389,13 @@ func TestCreateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.Wait()
+	m.WaitReady()
 
 	second, err := m.Create(ctx, req)
 	if err != nil {
 		t.Fatalf("Create() retry error = %v", err)
 	}
-	m.Wait()
+	m.WaitReady()
 
 	if second.ID != first.ID {
 		t.Errorf("retry id = %s, want %s", second.ID, first.ID)
@@ -392,7 +412,7 @@ func TestCreateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() new key error = %v", err)
 	}
-	m.Wait()
+	m.WaitReady()
 	if third.ID == first.ID {
 		t.Error("new key returned existing environment")
 	}
@@ -402,12 +422,12 @@ func TestCreateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() no key error = %v", err)
 	}
-	m.Wait()
+	m.WaitReady()
 	fifth, err := m.Create(ctx, req)
 	if err != nil {
 		t.Fatalf("Create() no key again error = %v", err)
 	}
-	m.Wait()
+	m.WaitReady()
 	if fourth.ID == fifth.ID {
 		t.Error("requests without a key returned the same environment")
 	}
@@ -423,7 +443,7 @@ func TestCreateIdempotencyKeyPerCaller(t *testing.T) {
 		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvRegularTesting,
 		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
-		CostBudgetTotal: decimal.RequireFromString("10"),
+		CostBudgetTotal: 1000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {
@@ -435,12 +455,12 @@ func TestCreateIdempotencyKeyPerCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create(alice) error = %v", err)
 	}
-	m.Wait()
+	m.WaitReady()
 	b, err := m.Create(ctx, CreateRequest{CallerID: bob, Type: db.EnvRegularTesting, Workload: "app", Template: dashboard, IdempotencyKey: "same"})
 	if err != nil {
 		t.Fatalf("Create(bob) error = %v", err)
 	}
-	m.Wait()
+	m.WaitReady()
 
 	if a.ID == b.ID {
 		t.Error("callers sharing a key got the same environment")
@@ -460,8 +480,8 @@ func TestCreateIdempotentReplaySkipsChecks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.Wait()
-	if err := db.SetCallerBudget(ctx, tx, callerID, provider.Resources{}, decimal.Zero, time.Now().Add(time.Hour)); err != nil {
+	m.WaitReady()
+	if err := db.SetCallerBudget(ctx, tx, callerID, provider.Resources{}, 0, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("SetCallerBudget() error = %v", err)
 	}
 

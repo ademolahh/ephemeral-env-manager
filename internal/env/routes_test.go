@@ -26,7 +26,7 @@ func createRouted(t *testing.T, tx pgx.Tx, callerID uuid.UUID, m *Manager) db.En
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.Wait()
+	m.WaitReady()
 
 	e, err := db.GetEnvironment(context.Background(), tx, created.ID)
 	if err != nil {
@@ -55,7 +55,7 @@ func TestCreateReturnsEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.Wait()
+	m.WaitReady()
 
 	want := testProxy.URL(created.ID)
 	if created.Status != db.EnvProvisioning {
@@ -99,7 +99,7 @@ func TestCreateFailedKeepsEndpointWithoutRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.Wait()
+	m.WaitReady()
 
 	if _, err := db.RouteBackend(context.Background(), tx, created.ID); !errors.Is(err, db.ErrRouteNotFound) {
 		t.Errorf("RouteBackend() error = %v, want ErrRouteNotFound", err)

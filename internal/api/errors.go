@@ -48,7 +48,8 @@ func errorStatus(err error) int {
 	case errors.Is(err, env.ErrNotPermitted),
 		errors.Is(err, env.ErrQuotaExceeded),
 		errors.Is(err, env.ErrBudgetExceeded),
-		errors.Is(err, env.ErrBudgetExpired):
+		errors.Is(err, env.ErrBudgetExpired),
+		errors.Is(err, env.ErrProdBugCapExceeded):
 		return http.StatusForbidden
 
 	case errors.Is(err, db.ErrEnvNotFound),

@@ -76,9 +76,10 @@ func TestCreate(t *testing.T) {
 
 	tpl := provider.Template{
 		Workload: provider.Workload{
-			Ports:     []int{6379},
-			Resources: provider.Resources{CPUCore: 1, RAMGB: 1, DiskGB: 1},
-			Env:       map[string]string{"APP_ENV": "test", "CACHE_URL": "redis://cache:6379"},
+			Ports:       []int{6379},
+			Resources:   provider.Resources{CPUCore: 1, RAMGB: 1, DiskGB: 1},
+			Env:         map[string]string{"APP_ENV": "test", "CACHE_URL": "redis://cache:6379"},
+			Healthcheck: "redis-cli ping",
 		},
 		Services: []provider.Service{
 			{
@@ -120,6 +121,9 @@ func TestCreate(t *testing.T) {
 		if !slices.Contains(wc.Config.Env, e) {
 			t.Errorf("workload env missing %q", e)
 		}
+	}
+	if wc.Config.Healthcheck == nil || !slices.Equal(wc.Config.Healthcheck.Test, []string{"CMD-SHELL", "redis-cli ping"}) {
+		t.Errorf("workload healthcheck = %+v, want CMD-SHELL redis-cli ping", wc.Config.Healthcheck)
 	}
 	if _, ok := wc.Config.ExposedPorts[network.MustParsePort("6379/tcp")]; !ok {
 		t.Errorf("workload exposed ports = %v, want 6379/tcp", wc.Config.ExposedPorts)

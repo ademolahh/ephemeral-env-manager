@@ -11,15 +11,15 @@ CREATE TABLE environments (
     ram_gb           integer NOT NULL CHECK (ram_gb >= 0),
     cpu_cores        integer NOT NULL CHECK (cpu_cores >= 0),
     disk_gb          integer NOT NULL CHECK (disk_gb >= 0),
-    hourly_rate      numeric NOT NULL CHECK (hourly_rate >= 0),
+    hourly_rate      bigint NOT NULL CHECK (hourly_rate >= 0),
     caller_id        uuid NOT NULL REFERENCES callers (id),
     failure_reason   text,
     template_name    text NOT NULL,
     template_version text NOT NULL,
     idempotency_key  text,
-    estimated_cost   numeric NOT NULL CHECK (estimated_cost >= 0),
-    reserved_cost    numeric NOT NULL CHECK (reserved_cost BETWEEN 0 AND estimated_cost),
-    charged_cost     numeric CHECK (charged_cost BETWEEN 0 AND estimated_cost)
+    estimated_cost   bigint NOT NULL CHECK (estimated_cost >= 0),
+    reserved_cost    bigint NOT NULL CHECK (reserved_cost BETWEEN 0 AND estimated_cost),
+    charged_cost     bigint CHECK (charged_cost BETWEEN 0 AND estimated_cost)
 );
 
 CREATE INDEX environments_caller_created_idx ON environments (caller_id, created_at DESC, id DESC);

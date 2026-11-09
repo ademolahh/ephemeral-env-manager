@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
@@ -26,7 +25,7 @@ func createRunning(t *testing.T, m *Manager, q db.DBTX, callerID uuid.UUID) db.E
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.Wait()
+	m.WaitReady()
 	got, err := db.GetEnvironment(context.Background(), q, e.ID)
 	if err != nil {
 		t.Fatalf("GetEnvironment() error = %v", err)
@@ -40,7 +39,7 @@ func otherCaller(t *testing.T, q db.DBTX, role db.Role) db.AuthenticatedCaller {
 		Role:            role,
 		PermittedEnv:    db.EnvProdBug,
 		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
-		CostBudgetTotal: decimal.RequireFromString("10"),
+		CostBudgetTotal: 1000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {

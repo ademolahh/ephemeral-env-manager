@@ -37,32 +37,39 @@ func TestSetEnvironmentEndpointNotFound(t *testing.T) {
 	}
 }
 
-func TestSetEnvironmentBackend(t *testing.T) {
+func TestMarkEnvironmentRunningSetsBackend(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
 	id := createTestEnvironment(t, tx, newEnvironment(createTestCaller(t, tx, newCaller())))
 
-	if err := SetEnvironmentBackend(ctx, tx, id, "eem-1-workload:8080"); err != nil {
-		t.Fatalf("SetEnvironmentBackend() error = %v", err)
+	if err := MarkEnvironmentRunning(ctx, tx, id, "eem-1-workload:8080"); err != nil {
+		t.Fatalf("MarkEnvironmentRunning() error = %v", err)
 	}
 
 	got, err := GetEnvironment(ctx, tx, id)
 	if err != nil {
 		t.Fatalf("GetEnvironment() error = %v", err)
 	}
-	if got.Backend == nil || *got.Backend != "eem-1-workload:8080" {
-		t.Errorf("backend = %v, want eem-1-workload:8080", got.Backend)
-	}
-	if got.Endpoint != nil {
-		t.Errorf("endpoint = %v, want nil", *got.Endpoint)
+	if got.Status != EnvRunning || got.Backend == nil || *got.Backend != "eem-1-workload:8080" {
+		t.Errorf("status, backend = %s, %v, want RUNNING, eem-1-workload:8080", got.Status, got.Backend)
 	}
 }
 
-func TestSetEnvironmentBackendNotFound(t *testing.T) {
+func TestMarkEnvironmentRunningWithoutBackend(t *testing.T) {
 	tx := testTx(t)
-	err := SetEnvironmentBackend(context.Background(), tx, uuid.New(), "x:1")
-	if !errors.Is(err, ErrEnvNotFound) {
-		t.Errorf("SetEnvironmentBackend() error = %v, want %v", err, ErrEnvNotFound)
+	ctx := context.Background()
+	id := createTestEnvironment(t, tx, newEnvironment(createTestCaller(t, tx, newCaller())))
+
+	if err := MarkEnvironmentRunning(ctx, tx, id, ""); err != nil {
+		t.Fatalf("MarkEnvironmentRunning() error = %v", err)
+	}
+
+	got, err := GetEnvironment(ctx, tx, id)
+	if err != nil {
+		t.Fatalf("GetEnvironment() error = %v", err)
+	}
+	if got.Status != EnvRunning || got.Backend != nil {
+		t.Errorf("status, backend = %s, %v, want RUNNING, nil", got.Status, got.Backend)
 	}
 }
 
@@ -89,8 +96,8 @@ func TestRouteBackend(t *testing.T) {
 		t.Run(string(status), func(t *testing.T) {
 			id := createTestEnvironment(t, tx, newEnvironment(callerID))
 			backend := "eem-" + id.String() + "-workload:8080"
-			if err := SetEnvironmentBackend(ctx, tx, id, backend); err != nil {
-				t.Fatalf("SetEnvironmentBackend() error = %v", err)
+			if _, err := tx.Exec(ctx, `UPDATE environments SET backend = $2 WHERE id = $1`, id, backend); err != nil {
+				t.Fatalf("set backend: %v", err)
 			}
 			forceStatus(t, tx, id, status)
 
@@ -123,4 +130,8 @@ func TestRouteBackendUnknown(t *testing.T) {
 	if _, err := RouteBackend(context.Background(), tx, uuid.New()); !errors.Is(err, ErrRouteNotFound) {
 		t.Errorf("RouteBackend() error = %v, want ErrRouteNotFound", err)
 	}
+}
+
+func markRunning(ctx context.Context, q DBTX, id uuid.UUID) error {
+	return MarkEnvironmentRunning(ctx, q, id, "")
 }

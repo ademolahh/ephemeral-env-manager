@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/auth"
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
@@ -20,9 +19,15 @@ import (
 func main() {
 	callerFlag := flag.String("caller-id", "", "existing caller UUID; omit to create a new caller")
 	expiresIn := flag.Duration("expires-in", 30*24*time.Hour, "API key validity (for example, 720h)")
+	role := flag.String("role", string(db.RoleUser), "role of a new caller: user or agent")
 	flag.Parse()
-	if flag.NArg() != 0 || *expiresIn <= 0 {
-		log.Fatal("usage: make api-key [ARGS=\"-caller-id UUID -expires-in 720h\"]")
+	if flag.NArg() != 0 || *expiresIn <= 0 || (*role != string(db.RoleUser) && *role != string(db.RoleAgent)) {
+		log.Fatal("usage: make api-key [ARGS=\"-caller-id UUID -role user|agent -expires-in 720h\"]")
+	}
+
+	permitted := db.EnvRegularTesting
+	if db.Role(*role) == db.RoleAgent {
+		permitted = db.EnvPRReview
 	}
 	if os.Getenv("DATABASE_URL") == "" {
 		log.Fatal("DATABASE_URL is required")
@@ -49,10 +54,10 @@ func main() {
 	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
 		if callerID == uuid.Nil {
 			id, err := db.CreateCaller(ctx, tx, db.NewCaller{
-				Role:            db.RoleUser,
-				PermittedEnv:    db.EnvRegularTesting,
+				Role:            db.Role(*role),
+				PermittedEnv:    permitted,
 				Quota:           provider.Resources{CPUCore: 4, RAMGB: 16, DiskGB: 50},
-				CostBudgetTotal: decimal.NewFromInt(100),
+				CostBudgetTotal: 10000,
 				BudgetExpiresAt: time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second),
 			})
 			if err != nil {

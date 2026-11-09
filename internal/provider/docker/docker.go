@@ -209,17 +209,10 @@ func (d *Docker) create(ctx context.Context, id, workload string, temp provider.
 	for i, s := range temp.Services {
 		wg.Go(func() {
 			cfg := &container.Config{
-				Image:  s.Image,
-				Env:    envList(s.Env),
-				Labels: labels,
-			}
-			if s.Healthcheck != "" {
-				cfg.Healthcheck = &container.HealthConfig{
-					Test:     []string{"CMD-SHELL", s.Healthcheck},
-					Interval: 5 * time.Second,
-					Timeout:  5 * time.Second,
-					Retries:  5,
-				}
+				Image:       s.Image,
+				Env:         envList(s.Env),
+				Labels:      labels,
+				Healthcheck: healthConfig(s.Healthcheck),
 			}
 
 			if _, err := d.run(ctx, id+"-"+s.Name, net, s.Name, cfg, s.Resources); err != nil {
@@ -252,6 +245,7 @@ func (d *Docker) create(ctx context.Context, id, workload string, temp provider.
 		Env:          envList(temp.Workload.Env),
 		ExposedPorts: ports,
 		Labels:       workloadLabels,
+		Healthcheck:  healthConfig(temp.Workload.Healthcheck),
 	}, temp.Workload.Resources)
 	if err != nil {
 		return "", fmt.Errorf("workload: %w", err)
@@ -402,6 +396,21 @@ func aggregateStatus(id string, containers []container.Summary) provider.Status 
 	}
 
 	return status
+}
+
+func healthConfig(cmd string) *container.HealthConfig {
+	if cmd == "" {
+		return nil
+	}
+
+	return &container.HealthConfig{
+		Test:          []string{"CMD-SHELL", cmd},
+		Interval:      5 * time.Second,
+		Timeout:       5 * time.Second,
+		Retries:       5,
+		StartPeriod:   time.Minute,
+		StartInterval: time.Second,
+	}
 }
 
 func workloadName(id string) string {

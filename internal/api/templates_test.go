@@ -36,7 +36,7 @@ func (s server) send(t *testing.T, method, path, key, body string) *httptest.Res
 	}
 	rec := httptest.NewRecorder()
 	s.handler.ServeHTTP(rec, req)
-	s.m.Wait()
+	s.settle(t)
 	return rec
 }
 

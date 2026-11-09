@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
@@ -24,6 +23,7 @@ var (
 	ErrProviderUnavailable = errors.New("provider not configured")
 	ErrInvalidEnvType      = errors.New("invalid environment type")
 	ErrNotPermitted        = errors.New("environment type not permitted for caller")
+	ErrProdBugCapExceeded  = errors.New("PROD_BUG cost cap exceeded")
 	ErrQuotaExceeded       = errors.New("quota exceeded")
 	ErrBudgetExpired       = errors.New("cost budget expired")
 	ErrBudgetExceeded      = errors.New("cost budget exceeded")
@@ -34,15 +34,18 @@ var (
 const (
 	statusTimeout = 5 * time.Second
 	execTimeout   = 5 * time.Minute
+	readyInterval = 2 * time.Second
 )
 
 var envTypes = []db.EnvType{db.EnvRegularTesting, db.EnvPRReview, db.EnvProdBug}
 
 type Manager struct {
-	db        db.DBTX
-	providers map[provider.Type]provider.Provider
-	proxy     *proxy.Proxy
-	wg        sync.WaitGroup
+	db          db.DBTX
+	providers   map[provider.Type]provider.Provider
+	proxy       *proxy.Proxy
+	wg          sync.WaitGroup
+	provisioned chan uuid.UUID
+	watching    sync.WaitGroup
 }
 
 type Option func(*Manager)
@@ -52,11 +55,12 @@ func WithProxy(p *proxy.Proxy) Option {
 }
 
 func NewManager(q db.DBTX, providers map[provider.Type]provider.Provider, opts ...Option) *Manager {
-	m := &Manager{db: q, providers: providers}
+	m := &Manager{db: q, providers: providers, provisioned: make(chan uuid.UUID, 100)}
 	for _, opt := range opts {
 		opt(m)
 	}
 
+	go m.watch()
 	return m
 }
 
@@ -312,8 +316,7 @@ func (m *Manager) ResolveStuck(ctx context.Context, e db.Environment) (db.EnvSta
 	}
 
 	if status == provider.StatusRunning {
-		m.route(ctx, p, e.ID)
-		err := db.MarkEnvironmentRunning(ctx, m.db, e.ID)
+		err := db.MarkEnvironmentRunning(ctx, m.db, e.ID, m.backend(ctx, p, e.ID))
 		if errors.Is(err, db.ErrInvalidTransition) {
 			return "", nil
 		}
@@ -378,6 +381,11 @@ func (m *Manager) Wait() {
 	m.wg.Wait()
 }
 
+func (m *Manager) WaitReady() {
+	m.wg.Wait()
+	m.watching.Wait()
+}
+
 func (m *Manager) List(ctx context.Context, e db.Environment) (any, error) {
 	return m.providers[e.Provider].List(ctx)
 }
@@ -394,39 +402,65 @@ func (m *Manager) provision(ctx context.Context, p provider.Provider, id uuid.UU
 		return
 	}
 
-	m.route(ctx, p, id)
+	m.watching.Add(1)
+	m.provisioned <- id
+}
 
-	err := db.MarkEnvironmentRunning(ctx, m.db, id)
-	if errors.Is(err, db.ErrInvalidTransition) {
-		if err := p.Delete(ctx, id.String()); err != nil {
-			log.Printf("remove environment %s deleted while provisioning: %v", id, err)
+func (m *Manager) watch() {
+	for id := range m.provisioned {
+		if m.checkProvisioned(id) {
+			m.watching.Done()
+		} else {
+			time.AfterFunc(readyInterval, func() { m.provisioned <- id })
 		}
-		return
-	}
-
-	if err != nil {
-		log.Printf("provision environment %s: %v", id, err)
 	}
 }
 
-func (m *Manager) route(ctx context.Context, p provider.Provider, id uuid.UUID) {
+func (m *Manager) checkProvisioned(id uuid.UUID) bool {
+	ctx := context.Background()
+	e, err := db.GetEnvironment(ctx, m.db, id)
+	if err != nil {
+		log.Printf("check environment %s: %v", id, err)
+		return false
+	}
+
+	p, ok := m.providers[e.Provider]
+	if !ok || e.Status != db.EnvProvisioning {
+		return true
+	}
+
+	statusCtx, cancel := context.WithTimeout(ctx, statusTimeout)
+	status, err := p.Status(statusCtx, id.String())
+	cancel()
+	if err != nil || status == provider.StatusStarting {
+		return false
+	}
+
+	if status != provider.StatusRunning {
+		if err := p.Delete(ctx, id.String()); err != nil {
+			log.Printf("remove environment %s: %v", id, err)
+		}
+		m.fail(ctx, id, fmt.Sprintf("environment did not become ready: instance %s", status))
+		return true
+	}
+
+	if err := db.MarkEnvironmentRunning(ctx, m.db, id, m.backend(ctx, p, id)); err != nil {
+		log.Printf("mark environment %s running: %v", id, err)
+	}
+	return true
+}
+
+func (m *Manager) backend(ctx context.Context, p provider.Provider, id uuid.UUID) string {
 	if m.proxy == nil {
-		return
+		return ""
 	}
 
 	addr, err := p.Address(ctx, id.String())
 	if err != nil {
 		log.Printf("route environment %s: %v", id, err)
-		return
 	}
 
-	if addr == "" {
-		return
-	}
-
-	if err := db.SetEnvironmentBackend(ctx, m.db, id, addr); err != nil {
-		log.Printf("route environment %s: %v", id, err)
-	}
+	return addr
 }
 
 func (m *Manager) fail(ctx context.Context, id uuid.UUID, reason string) {
@@ -443,8 +477,7 @@ type reservation struct {
 }
 
 func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, px *proxy.Proxy, req CreateRequest) (reservation, error) {
-	rank := priority(req.Type)
-	if rank == 0 {
+	if priority(req.Type) == 0 {
 		return reservation{}, fmt.Errorf("%w: %q", ErrInvalidEnvType, req.Type)
 	}
 
@@ -466,8 +499,8 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, px *proxy.Proxy, 
 		}
 	}
 
-	if rank > priority(caller.PermittedEnv) {
-		return reservation{}, fmt.Errorf("%s with permission %s: %w", req.Type, caller.PermittedEnv, ErrNotPermitted)
+	if err := authorize(caller, req.Type); err != nil {
+		return reservation{}, err
 	}
 
 	need := req.Template.TotalResources()
@@ -487,13 +520,17 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, px *proxy.Proxy, 
 
 	rate := req.Template.HourlyCost(prices)
 	cost := estimatedCost(rate, req.Template.TTL)
-	if req.Type != db.EnvProdBug {
+	if req.Type == db.EnvProdBug && caller.Role == db.RoleAgent {
+		if caller.ProdBugCost+cost > caller.ProdBugCostCap {
+			return reservation{}, fmt.Errorf("used %d, estimated %d, cap %d: %w", caller.ProdBugCost, cost, caller.ProdBugCostCap, ErrProdBugCapExceeded)
+		}
+	} else if req.Type != db.EnvProdBug {
 		if caller.BudgetExpired {
 			return reservation{}, ErrBudgetExpired
 		}
 
-		if caller.CostUsed.Add(cost).GreaterThan(caller.CostBudgetTotal) {
-			return reservation{}, fmt.Errorf("used %s, estimated %s, budget %s: %w", caller.CostUsed, cost, caller.CostBudgetTotal, ErrBudgetExceeded)
+		if caller.CostUsed+cost > caller.CostBudgetTotal {
+			return reservation{}, fmt.Errorf("used %d, estimated %d, budget %d: %w", caller.CostUsed, cost, caller.CostBudgetTotal, ErrBudgetExceeded)
 		}
 	}
 
@@ -534,6 +571,18 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, px *proxy.Proxy, 
 	}
 
 	return reservation{env: e, created: true, preempted: preempted}, nil
+}
+
+func authorize(caller db.CallerLimits, t db.EnvType) error {
+	if priority(t) > priority(caller.PermittedEnv) {
+		return fmt.Errorf("%s with permission %s: %w", t, caller.PermittedEnv, ErrNotPermitted)
+	}
+
+	if caller.Role == db.RoleAgent && t != db.EnvPRReview && t != db.EnvProdBug {
+		return fmt.Errorf("agents create PR_REVIEW or PROD_BUG, not %s: %w", t, ErrNotPermitted)
+	}
+
+	return nil
 }
 
 func makeRoom(ctx context.Context, tx pgx.Tx, pt provider.Type, t db.EnvType, need provider.Resources) ([]uuid.UUID, error) {
@@ -640,10 +689,9 @@ func lowerPriority(t db.EnvType) []db.EnvType {
 	return lower
 }
 
-// estimatedCost = hourly_rate × ttl_seconds / 3600
-// where hourly_rate = cpu_core × cpu_price + ram_gb × ram_price + disk_gb × disk_price
-func estimatedCost(rate decimal.Decimal, ttl time.Duration) decimal.Decimal {
-	return rate.Mul(decimal.NewFromInt(int64(ttl / time.Second))).Div(decimal.NewFromInt(3600))
+func estimatedCost(rate int64, ttl time.Duration) int64 {
+	const microsPerCentHour = 3600 * 10000
+	return (rate*int64(ttl/time.Second) + microsPerCentHour - 1) / microsPerCentHour
 }
 
 func fits(need, free provider.Resources) bool {

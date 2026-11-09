@@ -222,15 +222,9 @@ function readableDate(value) {
       }).format(date);
 }
 
-function formatUSD(value) {
-  const match = String(value).match(/^(\d+)(?:\.(\d+))?$/);
-  if (!match) return "—";
-  const whole = BigInt(match[1]).toLocaleString("en-US");
-  const fraction = (match[2] || "")
-    .slice(0, 6)
-    .replace(/0+$/, "")
-    .padEnd(2, "0");
-  return `$${whole}.${fraction}`;
+function formatUSD(cents) {
+  if (!Number.isInteger(cents)) return "—";
+  return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
 function renderBudget(budget) {
@@ -620,7 +614,7 @@ $("admin-budget-form").addEventListener("submit", async (event) => {
         ram_gb: Number($("admin-quota-ram").value),
         disk_gb: Number($("admin-quota-disk").value),
       },
-      cost_budget_total: $("admin-budget-total").value,
+      cost_budget_total: Math.round(Number($("admin-budget-total").value) * 100),
       budget_expires_at: new Date($("admin-budget-expires").value).toISOString(),
     },
     "Budget and quota updated.",
@@ -651,9 +645,9 @@ $("admin-prices-form").addEventListener("submit", async (event) => {
     "admin-prices-message",
     `/prices/${encodeURIComponent($("admin-prices-provider").value.trim())}`,
     {
-      cpu_core: $("admin-price-cpu").value,
-      ram_gb: $("admin-price-ram").value,
-      disk_gb: $("admin-price-disk").value,
+      cpu_core: Math.round(Number($("admin-price-cpu").value) * 1e6),
+      ram_gb: Math.round(Number($("admin-price-ram").value) * 1e6),
+      disk_gb: Math.round(Number($("admin-price-disk").value) * 1e6),
     },
     "Hourly prices updated.",
   );

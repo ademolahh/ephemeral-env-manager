@@ -2,8 +2,6 @@ package provider
 
 import (
 	"time"
-
-	"github.com/shopspring/decimal"
 )
 
 type Template struct {
@@ -38,9 +36,9 @@ type Resources struct {
 }
 
 type Prices struct {
-	CPUCore decimal.Decimal
-	RAMGB   decimal.Decimal
-	DiskGB  decimal.Decimal
+	CPUCore int64
+	RAMGB   int64
+	DiskGB  int64
 }
 
 func (t Template) TotalResources() Resources {
@@ -53,9 +51,7 @@ func (t Template) TotalResources() Resources {
 	return total
 }
 
-func (t Template) HourlyCost(p Prices) decimal.Decimal {
+func (t Template) HourlyCost(p Prices) int64 {
 	r := t.TotalResources()
-	return p.CPUCore.Mul(decimal.NewFromInt(int64(r.CPUCore))).
-		Add(p.RAMGB.Mul(decimal.NewFromInt(int64(r.RAMGB)))).
-		Add(p.DiskGB.Mul(decimal.NewFromInt(int64(r.DiskGB))))
+	return p.CPUCore*int64(r.CPUCore) + p.RAMGB*int64(r.RAMGB) + p.DiskGB*int64(r.DiskGB)
 }

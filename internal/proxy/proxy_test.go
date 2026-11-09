@@ -13,7 +13,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
@@ -156,7 +155,7 @@ func createEnvironment(t *testing.T, tx pgx.Tx, backend string, status db.EnvSta
 		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvPRReview,
 		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
-		CostBudgetTotal: decimal.NewFromInt(100),
+		CostBudgetTotal: 10000,
 		BudgetExpiresAt: time.Now().Add(time.Hour),
 	})
 	if err != nil {
@@ -168,7 +167,7 @@ func createEnvironment(t *testing.T, tx pgx.Tx, backend string, status db.EnvSta
 		Type:            db.EnvPRReview,
 		Provider:        provider.Docker,
 		Resources:       provider.Resources{CPUCore: 1, RAMGB: 1, DiskGB: 1},
-		HourlyRate:      decimal.NewFromInt(0),
+		HourlyRate:      0,
 		TTL:             time.Hour,
 		TemplateName:    "t",
 		TemplateVersion: "v1",
@@ -177,13 +176,12 @@ func createEnvironment(t *testing.T, tx pgx.Tx, backend string, status db.EnvSta
 		t.Fatalf("CreateEnvironment() error = %v", err)
 	}
 
-	if err := db.SetEnvironmentBackend(ctx, tx, id, backend); err != nil {
-		t.Fatalf("SetEnvironmentBackend() error = %v", err)
-	}
 	if status == db.EnvRunning {
-		if err := db.MarkEnvironmentRunning(ctx, tx, id); err != nil {
+		if err := db.MarkEnvironmentRunning(ctx, tx, id, backend); err != nil {
 			t.Fatalf("MarkEnvironmentRunning() error = %v", err)
 		}
+	} else if _, err := tx.Exec(ctx, `UPDATE environments SET backend = $2 WHERE id = $1`, id, backend); err != nil {
+		t.Fatalf("set backend: %v", err)
 	}
 
 	return id

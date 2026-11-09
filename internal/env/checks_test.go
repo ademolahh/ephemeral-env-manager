@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
@@ -41,7 +40,7 @@ func (f fixture) caller(t *testing.T, mutate func(*db.NewCaller)) uuid.UUID {
 		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvProdBug,
 		Quota:           provider.Resources{CPUCore: 1000, RAMGB: 1000, DiskGB: 1000},
-		CostBudgetTotal: decimal.RequireFromString("1000"),
+		CostBudgetTotal: 100000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	}
 	if mutate != nil {
@@ -55,7 +54,7 @@ func (f fixture) caller(t *testing.T, mutate func(*db.NewCaller)) uuid.UUID {
 }
 
 func (f fixture) create(callerID uuid.UUID, typ db.EnvType, r provider.Resources) (uuid.UUID, error) {
-	defer f.m.Wait()
+	defer f.m.WaitReady()
 	e, err := f.m.Create(context.Background(), CreateRequest{
 		CallerID: callerID,
 		Type:     typ,
@@ -129,7 +128,7 @@ func TestCreateFailureReleasesReservation(t *testing.T) {
 	f := newFixture(t, provider.Resources{CPUCore: 10, RAMGB: 10, DiskGB: 10})
 	callerID := f.caller(t, func(c *db.NewCaller) {
 		c.Quota = cpu(2)
-		c.CostBudgetTotal = decimal.RequireFromString("0.009")
+		c.CostBudgetTotal = 1
 	})
 	f.fake.err = errors.New("boom")
 
@@ -228,7 +227,7 @@ func TestCreateQuotaPerCaller(t *testing.T) {
 
 func TestCreateBudget(t *testing.T) {
 	f := newFixture(t, cpu(100))
-	callerID := f.caller(t, func(c *db.NewCaller) { c.CostBudgetTotal = decimal.RequireFromString("0.008096") })
+	callerID := f.caller(t, func(c *db.NewCaller) { c.CostBudgetTotal = 2 })
 
 	f.mustCreate(t, callerID, db.EnvRegularTesting, cpu(1))
 	f.mustCreate(t, callerID, db.EnvPRReview, cpu(1))
@@ -246,7 +245,7 @@ func TestCreateBudget(t *testing.T) {
 
 func TestCreateBudgetIgnoresProdBugSpend(t *testing.T) {
 	f := newFixture(t, cpu(100))
-	callerID := f.caller(t, func(c *db.NewCaller) { c.CostBudgetTotal = decimal.RequireFromString("0.004048") })
+	callerID := f.caller(t, func(c *db.NewCaller) { c.CostBudgetTotal = 1 })
 
 	f.mustCreate(t, callerID, db.EnvProdBug, cpu(10))
 	f.mustCreate(t, callerID, db.EnvRegularTesting, cpu(1))
@@ -264,7 +263,7 @@ func TestCreateBudgetExpired(t *testing.T) {
 	}
 }
 
-func (f fixture) used(t *testing.T, callerID uuid.UUID) decimal.Decimal {
+func (f fixture) used(t *testing.T, callerID uuid.UUID) int64 {
 	t.Helper()
 	c, err := db.LockCaller(context.Background(), f.q, callerID)
 	if err != nil {
@@ -275,29 +274,29 @@ func (f fixture) used(t *testing.T, callerID uuid.UUID) decimal.Decimal {
 
 func TestCreateReservesBudget(t *testing.T) {
 	f := newFixture(t, cpu(100))
-	callerID := f.caller(t, func(c *db.NewCaller) { c.CostBudgetTotal = decimal.RequireFromString("1") })
+	callerID := f.caller(t, func(c *db.NewCaller) { c.CostBudgetTotal = 100 })
 
 	f.mustCreate(t, callerID, db.EnvRegularTesting, cpu(2))
-	if got, want := f.used(t, callerID), decimal.RequireFromString("0.008096"); !got.Equal(want) {
-		t.Errorf("used after create = %s, want %s (2 cpu x 0.004048 x 1h)", got, want)
+	if got, want := f.used(t, callerID), int64(1); got != want {
+		t.Errorf("used after create = %d, want %d (2 cpu x 4048 micro-USD x 1h, rounded up to a cent)", got, want)
 	}
 
 	f.mustCreate(t, callerID, db.EnvProdBug, cpu(2))
-	if got, want := f.used(t, callerID), decimal.RequireFromString("0.008096"); !got.Equal(want) {
-		t.Errorf("used after PROD_BUG = %s, want %s unchanged (exempt)", got, want)
+	if got, want := f.used(t, callerID), int64(1); got != want {
+		t.Errorf("used after PROD_BUG = %d, want %d unchanged (exempt)", got, want)
 	}
 	b, err := db.GetCallerBudget(context.Background(), f.q, callerID)
 	if err != nil {
 		t.Fatalf("GetCallerBudget() error = %v", err)
 	}
-	if want := decimal.RequireFromString("0.008096"); !b.ProdBugCost.Equal(want) {
-		t.Errorf("prod bug cost = %s, want %s recorded", b.ProdBugCost, want)
+	if want := int64(1); b.ProdBugCost != want {
+		t.Errorf("prod bug cost = %d, want %d recorded", b.ProdBugCost, want)
 	}
 }
 
 func TestCreateBudgetRefundedOnEarlyDelete(t *testing.T) {
 	f := newFixture(t, cpu(100))
-	callerID := f.caller(t, func(c *db.NewCaller) { c.CostBudgetTotal = decimal.RequireFromString("0.005") })
+	callerID := f.caller(t, func(c *db.NewCaller) { c.CostBudgetTotal = 1 })
 
 	first := f.mustCreate(t, callerID, db.EnvRegularTesting, cpu(1))
 	if _, err := f.create(callerID, db.EnvRegularTesting, cpu(1)); !errors.Is(err, ErrBudgetExceeded) {
@@ -313,8 +312,8 @@ func TestCreateBudgetRefundedOnEarlyDelete(t *testing.T) {
 	}
 	f.m.Wait()
 
-	if got := f.used(t, callerID); got.GreaterThan(decimal.RequireFromString("0.00001")) {
-		t.Errorf("used after early delete = %s, want nearly all of it refunded", got)
+	if got := f.used(t, callerID); got != 0 {
+		t.Errorf("used after early delete = %d, want it refunded", got)
 	}
 	if _, err := f.create(callerID, db.EnvRegularTesting, cpu(1)); err != nil {
 		t.Errorf("Create() after refund error = %v", err)
@@ -468,18 +467,20 @@ func TestCreateNoCapacityPool(t *testing.T) {
 
 func TestEstimatedCost(t *testing.T) {
 	tests := []struct {
-		rate string
+		rate int64
 		ttl  time.Duration
-		want string
+		want int64
 	}{
-		{"0.054569", 4 * time.Hour, "0.218276"},
-		{"0.004048", 30 * time.Minute, "0.002024"},
-		{"1", 0, "0"},
+		{54569, 4 * time.Hour, 22},
+		{4048, 30 * time.Minute, 1},
+		{10000, time.Hour, 1},
+		{20000, 90 * time.Minute, 3},
+		{1000000, 0, 0},
 	}
 	for _, tt := range tests {
-		got := estimatedCost(decimal.RequireFromString(tt.rate), tt.ttl)
-		if !got.Equal(decimal.RequireFromString(tt.want)) {
-			t.Errorf("estimatedCost(%s, %s) = %s, want %s", tt.rate, tt.ttl, got, tt.want)
+		got := estimatedCost(tt.rate, tt.ttl)
+		if got != tt.want {
+			t.Errorf("estimatedCost(%d, %s) = %d, want %d", tt.rate, tt.ttl, got, tt.want)
 		}
 	}
 }

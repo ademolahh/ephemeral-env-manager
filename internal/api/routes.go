@@ -13,6 +13,7 @@ func Routes(h *Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /callers/{id}/budget", h.GetBudget)
 	mux.Handle("PUT /callers/{id}/budget", requireAdmin(http.HandlerFunc(h.SetBudget)))
+	mux.Handle("PUT /callers/{id}/permission", requireAdmin(http.HandlerFunc(h.SetPermission)))
 	mux.Handle("POST /envs", requireCaller(http.HandlerFunc(h.CreateEnv)))
 	mux.HandleFunc("GET /capacity", h.GetCapacity)
 	mux.Handle("PUT /capacity/{provider}", requireAdmin(http.HandlerFunc(h.SetCapacity)))

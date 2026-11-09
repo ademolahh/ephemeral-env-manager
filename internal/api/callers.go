@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
@@ -15,7 +14,7 @@ import (
 
 var (
 	defaultQuota        = provider.Resources{CPUCore: 4, RAMGB: 16, DiskGB: 50}
-	defaultCostBudget   = decimal.NewFromInt(100)
+	defaultCostBudget   = int64(10000)
 	defaultBudgetPeriod = 30 * 24 * time.Hour
 )
 
@@ -31,7 +30,7 @@ type callerResponse struct {
 	GithubLogin     *string            `json:"github_login"`
 	GithubID        *string            `json:"github_id"`
 	Quota           provider.Resources `json:"quota"`
-	CostBudgetTotal decimal.Decimal    `json:"cost_budget_total"`
+	CostBudgetTotal int64              `json:"cost_budget_total"`
 	BudgetExpiresAt time.Time          `json:"budget_expires_at"`
 }
 
@@ -79,17 +78,18 @@ func optional(s string) *string {
 
 type setBudgetRequest struct {
 	Quota           *provider.Resources `json:"quota"`
-	CostBudgetTotal *decimal.Decimal    `json:"cost_budget_total"`
+	CostBudgetTotal *int64              `json:"cost_budget_total"`
 	BudgetExpiresAt *time.Time          `json:"budget_expires_at"`
 }
 
 type budgetResponse struct {
 	CallerID        uuid.UUID          `json:"caller_id"`
 	Currency        string             `json:"currency"`
-	CostBudget      decimal.Decimal    `json:"cost_budget"`
-	CostUsed        decimal.Decimal    `json:"cost_used"`
-	CostRemaining   decimal.Decimal    `json:"cost_remaining"`
-	ProdBugCostUsed decimal.Decimal    `json:"prod_bug_cost_used"`
+	CostBudget      int64              `json:"cost_budget"`
+	CostUsed        int64              `json:"cost_used"`
+	CostRemaining   int64              `json:"cost_remaining"`
+	ProdBugCostUsed int64              `json:"prod_bug_cost_used"`
+	ProdBugCostCap  int64              `json:"prod_bug_cost_cap"`
 	BudgetExpiresAt time.Time          `json:"budget_expires_at"`
 	Quota           provider.Resources `json:"quota"`
 	ResourcesUsed   provider.Resources `json:"resources_used"`
@@ -140,11 +140,12 @@ func (h *Handler) callerBudget(ctx context.Context, id uuid.UUID) (budgetRespons
 
 	return budgetResponse{
 		CallerID:        id,
-		Currency:        "USD",
+		Currency:        "USD cents",
 		CostBudget:      budget.CostBudgetTotal,
 		CostUsed:        budget.CostUsed,
-		CostRemaining:   decimal.Max(decimal.Zero, budget.CostBudgetTotal.Sub(budget.CostUsed)),
+		CostRemaining:   max(0, budget.CostBudgetTotal-budget.CostUsed),
 		ProdBugCostUsed: budget.ProdBugCost,
+		ProdBugCostCap:  budget.ProdBugCostCap,
 		BudgetExpiresAt: budget.BudgetExpiresAt,
 		Quota:           budget.Quota,
 		ResourcesUsed:   resourcesUsed,
@@ -185,7 +186,7 @@ func (r setBudgetRequest) validate(now time.Time) error {
 		return errors.New("quota must not be negative")
 	}
 
-	if r.CostBudgetTotal.IsNegative() {
+	if *r.CostBudgetTotal < 0 {
 		return errors.New("cost_budget_total must not be negative")
 	}
 
@@ -194,4 +195,39 @@ func (r setBudgetRequest) validate(now time.Time) error {
 	}
 
 	return nil
+}
+
+type setPermissionRequest struct {
+	PermittedEnv   db.EnvType `json:"permitted_env"`
+	ProdBugCostCap *int64     `json:"prod_bug_cost_cap"`
+}
+
+func (h *Handler) SetPermission(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid caller id")
+		return
+	}
+
+	var req setPermissionRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	if req.PermittedEnv != db.EnvRegularTesting && req.PermittedEnv != db.EnvPRReview && req.PermittedEnv != db.EnvProdBug {
+		writeError(w, http.StatusBadRequest, "permitted_env must be REGULAR_TESTING, PR_REVIEW or PROD_BUG")
+		return
+	}
+
+	if req.ProdBugCostCap == nil || *req.ProdBugCostCap < 0 {
+		writeError(w, http.StatusBadRequest, "prod_bug_cost_cap is required and must not be negative")
+		return
+	}
+
+	if err := db.SetCallerPermission(r.Context(), h.db, id, req.PermittedEnv, *req.ProdBugCostCap); err != nil {
+		writeServiceError(w, "set permission", err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

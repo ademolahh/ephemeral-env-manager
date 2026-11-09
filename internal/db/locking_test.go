@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
@@ -113,7 +112,7 @@ func TestRefundDoesNotDeadlockWithCreate(t *testing.T) {
 		t.Fatalf("CreateCaller() error = %v", err)
 	}
 	e := newEnvironment(callerID)
-	e.EstimatedCost = decimal.RequireFromString("2")
+	e.EstimatedCost = 200
 	id, err := CreateEnvironment(ctx, pool, e)
 	if err != nil {
 		t.Fatalf("CreateEnvironment() error = %v", err)
@@ -161,7 +160,7 @@ func TestRefundDoesNotDeadlockWithCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LockCaller() error = %v", err)
 	}
-	if c.CostUsed.GreaterThanOrEqual(decimal.RequireFromString("2")) {
-		t.Errorf("used = %s, want most of the 2 reserved refunded", c.CostUsed)
+	if c.CostUsed >= 200 {
+		t.Errorf("used = %d, want most of the 200 reserved refunded", c.CostUsed)
 	}
 }

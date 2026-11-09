@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
@@ -19,7 +18,7 @@ func newEnvironment(callerID uuid.UUID) NewEnvironment {
 		Type:            EnvPRReview,
 		Provider:        provider.Docker,
 		Resources:       provider.Resources{CPUCore: 3, RAMGB: 9, DiskGB: 22},
-		HourlyRate:      decimal.RequireFromString("0.054569"),
+		HourlyRate:      54569,
 		TTL:             4 * time.Hour,
 		TemplateName:    "clear-dashboard",
 		TemplateVersion: "v1",
@@ -83,8 +82,8 @@ func TestCreateEnvironment(t *testing.T) {
 	if got.Resources != want.Resources {
 		t.Errorf("resources = %+v, want %+v", got.Resources, want.Resources)
 	}
-	if !got.HourlyRate.Equal(want.HourlyRate) {
-		t.Errorf("hourly_rate = %s, want %s", got.HourlyRate, want.HourlyRate)
+	if got.HourlyRate != want.HourlyRate {
+		t.Errorf("hourly_rate = %d, want %d", got.HourlyRate, want.HourlyRate)
 	}
 	if got.CallerID != callerID {
 		t.Errorf("caller_id = %s, want %s", got.CallerID, callerID)
@@ -110,7 +109,7 @@ func TestCreateEnvironmentErrors(t *testing.T) {
 		{name: "invalid type", mutate: func(e *NewEnvironment) { e.Type = "NOPE" }, code: "22P02"},
 		{name: "invalid provider", mutate: func(e *NewEnvironment) { e.Provider = "aws" }, code: "22P02"},
 		{name: "negative resources", mutate: func(e *NewEnvironment) { e.Resources.RAMGB = -1 }, code: "23514"},
-		{name: "negative hourly rate", mutate: func(e *NewEnvironment) { e.HourlyRate = decimal.NewFromInt(-1) }, code: "23514"},
+		{name: "negative hourly rate", mutate: func(e *NewEnvironment) { e.HourlyRate = -1 }, code: "23514"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -135,7 +134,7 @@ func TestGetEnvironmentNotFound(t *testing.T) {
 
 func TestEnvironmentTransitions(t *testing.T) {
 	mark := map[EnvStatus]func(context.Context, DBTX, uuid.UUID) error{
-		EnvRunning:  MarkEnvironmentRunning,
+		EnvRunning:  markRunning,
 		EnvDeleting: MarkEnvironmentDeleting,
 		EnvDeleted:  MarkEnvironmentDeleted,
 		EnvFailed: func(ctx context.Context, q DBTX, id uuid.UUID) error {
@@ -200,7 +199,7 @@ func TestEnvironmentTransitionNotFound(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
 	for name, fn := range map[string]func() error{
-		"running":  func() error { return MarkEnvironmentRunning(ctx, tx, uuid.New()) },
+		"running":  func() error { return MarkEnvironmentRunning(ctx, tx, uuid.New(), "") },
 		"failed":   func() error { return MarkEnvironmentFailed(ctx, tx, uuid.New(), "x") },
 		"deleting": func() error { return MarkEnvironmentDeleting(ctx, tx, uuid.New()) },
 		"deleted":  func() error { return MarkEnvironmentDeleted(ctx, tx, uuid.New()) },

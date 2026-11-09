@@ -8,16 +8,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
 type pricesRow struct {
 	ID     uuid.UUID
-	CPU    string
-	RAM    string
-	Disk   string
+	CPU    int64
+	RAM    int64
+	Disk   int64
 	Copies int
 }
 
@@ -25,7 +24,7 @@ func getPrices(t *testing.T, tx pgx.Tx, p provider.Type) pricesRow {
 	t.Helper()
 	var r pricesRow
 	err := tx.QueryRow(context.Background(), `
-		SELECT id, cpu_cores::text, ram_gb::text, disk_gb::text,
+		SELECT id, cpu_cores, ram_gb, disk_gb,
 			(SELECT count(*) FROM hourly_prices WHERE provider = $1)
 		FROM hourly_prices WHERE provider = $1`, p,
 	).Scan(&r.ID, &r.CPU, &r.RAM, &r.Disk, &r.Copies)
@@ -37,8 +36,8 @@ func getPrices(t *testing.T, tx pgx.Tx, p provider.Type) pricesRow {
 
 func checkPrices(t *testing.T, got pricesRow, want provider.Prices) {
 	t.Helper()
-	if got.CPU != want.CPUCore.String() || got.RAM != want.RAMGB.String() || got.Disk != want.DiskGB.String() {
-		t.Errorf("prices = %s/%s/%s, want %s/%s/%s",
+	if got.CPU != want.CPUCore || got.RAM != want.RAMGB || got.Disk != want.DiskGB {
+		t.Errorf("prices = %d/%d/%d, want %d/%d/%d",
 			got.CPU, got.RAM, got.Disk,
 			want.CPUCore, want.RAMGB, want.DiskGB)
 	}
@@ -48,9 +47,9 @@ func checkPrices(t *testing.T, got pricesRow, want provider.Prices) {
 }
 
 var dockerPrices = provider.Prices{
-	CPUCore: decimal.RequireFromString("0.004048"),
-	RAMGB:   decimal.RequireFromString("0.004445"),
-	DiskGB:  decimal.RequireFromString("0.00011"),
+	CPUCore: 4048,
+	RAMGB:   4445,
+	DiskGB:  110,
 }
 
 func TestSetHourlyPricesInsert(t *testing.T) {
@@ -73,9 +72,9 @@ func TestSetHourlyPricesUpdate(t *testing.T) {
 	before := getPrices(t, tx, provider.Docker)
 
 	updated := provider.Prices{
-		CPUCore: decimal.RequireFromString("0.01"),
-		RAMGB:   decimal.Zero,
-		DiskGB:  decimal.RequireFromString("0.000123456789"),
+		CPUCore: 10000,
+		RAMGB:   0,
+		DiskGB:  123,
 	}
 	if err := SetHourlyPrices(ctx, tx, provider.Docker, updated); err != nil {
 		t.Fatalf("SetHourlyPrices() error = %v", err)
@@ -92,9 +91,9 @@ func TestSetHourlyPricesProvidersIndependent(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
 	cloudPrices := provider.Prices{
-		CPUCore: decimal.RequireFromString("0.0416"),
-		RAMGB:   decimal.RequireFromString("0.0052"),
-		DiskGB:  decimal.RequireFromString("0.0001"),
+		CPUCore: 41600,
+		RAMGB:   5200,
+		DiskGB:  100,
 	}
 
 	if err := SetHourlyPrices(ctx, tx, provider.Docker, dockerPrices); err != nil {
@@ -118,19 +117,19 @@ func TestSetHourlyPricesErrors(t *testing.T) {
 		{
 			name:     "negative cpu",
 			provider: provider.Docker,
-			prices:   provider.Prices{CPUCore: decimal.RequireFromString("-0.1")},
+			prices:   provider.Prices{CPUCore: -1},
 			code:     "23514",
 		},
 		{
 			name:     "negative ram",
 			provider: provider.Docker,
-			prices:   provider.Prices{RAMGB: decimal.RequireFromString("-0.1")},
+			prices:   provider.Prices{RAMGB: -1},
 			code:     "23514",
 		},
 		{
 			name:     "negative disk",
 			provider: provider.Docker,
-			prices:   provider.Prices{DiskGB: decimal.RequireFromString("-0.1")},
+			prices:   provider.Prices{DiskGB: -1},
 			code:     "23514",
 		},
 		{
@@ -167,7 +166,7 @@ func TestGetHourlyPrices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHourlyPrices() error = %v", err)
 	}
-	if !got.CPUCore.Equal(dockerPrices.CPUCore) || !got.RAMGB.Equal(dockerPrices.RAMGB) || !got.DiskGB.Equal(dockerPrices.DiskGB) {
+	if got != dockerPrices {
 		t.Errorf("GetHourlyPrices() = %+v, want %+v", got, dockerPrices)
 	}
 }

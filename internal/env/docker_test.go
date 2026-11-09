@@ -91,6 +91,7 @@ func TestCreateDocker(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
+	m.WaitReady()
 	env, err := db.GetEnvironment(ctx, tx, id)
 	if err != nil {
 		t.Fatalf("GetEnvironment() error = %v", err)

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
@@ -116,7 +115,7 @@ func newFixture(t *testing.T, q db.DBTX) fixture {
 		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvProdBug,
 		Quota:           provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000},
-		CostBudgetTotal: decimal.RequireFromString("100"),
+		CostBudgetTotal: 10000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {
@@ -139,7 +138,7 @@ func (f fixture) env(t *testing.T, p provider.Type, status db.EnvStatus, expired
 		Type:            db.EnvRegularTesting,
 		Provider:        p,
 		Resources:       provider.Resources{CPUCore: 1, RAMGB: 1, DiskGB: 1},
-		HourlyRate:      decimal.RequireFromString("0.01"),
+		HourlyRate:      10000,
 		TTL:             time.Hour,
 		TemplateName:    "app",
 		TemplateVersion: "v1",
@@ -391,7 +390,7 @@ func (f fixture) otherCaller(t *testing.T) uuid.UUID {
 		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvProdBug,
 		Quota:           provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000},
-		CostBudgetTotal: decimal.RequireFromString("100"),
+		CostBudgetTotal: 10000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {

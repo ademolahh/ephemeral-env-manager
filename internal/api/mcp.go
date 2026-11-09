@@ -54,18 +54,59 @@ type templateInput struct {
 func (h *Handler) MCP() http.Handler {
 	s := mcp.NewServer(&mcp.Implementation{Name: "eem", Version: "v1"}, nil)
 
-	mcp.AddTool(s, &mcp.Tool{Name: "create_environment", Description: "Create an environment from a stored template. It starts PROVISIONING; poll get_environment until RUNNING."}, h.mcpCreateEnv)
-	mcp.AddTool(s, &mcp.Tool{Name: "get_environment", Description: "Get an environment's status, endpoint and instance status."}, h.mcpGetEnv)
-	mcp.AddTool(s, &mcp.Tool{Name: "list_environments", Description: "List your environments, newest first."}, h.mcpListEnvs)
-	mcp.AddTool(s, &mcp.Tool{Name: "delete_environment", Description: "Delete one of your environments."}, h.mcpDeleteEnv)
-	mcp.AddTool(s, &mcp.Tool{Name: "exec", Description: "Run a command in a RUNNING environment's workload and return its output and exit code. Times out after 5 minutes."}, h.mcpExec)
-	mcp.AddTool(s, &mcp.Tool{Name: "list_templates", Description: "List stored templates that create_environment can use."}, h.mcpListTemplates)
-	mcp.AddTool(s, &mcp.Tool{Name: "get_template", Description: "Get a stored template's workload, services, resources and ttl."}, h.mcpGetTemplate)
-	mcp.AddTool(s, &mcp.Tool{Name: "get_budget", Description: "Get your quota, resource usage and cost budget."}, h.mcpGetBudget)
-	mcp.AddTool(s, &mcp.Tool{Name: "get_capacity", Description: "Get each provider's capacity pool and free resources."}, h.mcpGetCapacity)
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "create_environment",
+		Description: "Create an environment from a stored template. Agents can create PR_REVIEW, or PROD_BUG when permitted and within their PROD_BUG cost cap. It starts PROVISIONING; poll get_environment until RUNNING.",
+	}, h.mcpCreateEnv)
 
-	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{Stateless: true})
-	return mcpauth.RequireBearerToken(h.verifyMCPToken, &mcpauth.RequireBearerTokenOptions{AllowMissingExpiration: true})(handler)
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_environment",
+		Description: "Get an environment's status, endpoint and instance status.",
+	}, h.mcpGetEnv)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "list_environments",
+		Description: "List your environments, newest first.",
+	}, h.mcpListEnvs)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "delete_environment",
+		Description: "Delete one of your environments.",
+	}, h.mcpDeleteEnv)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "exec",
+		Description: "Run a command in a RUNNING environment's workload and return its output and exit code. Times out after 5 minutes.",
+	}, h.mcpExec)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "list_templates",
+		Description: "List stored templates that create_environment can use.",
+	}, h.mcpListTemplates)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_template",
+		Description: "Get a stored template's workload, services, resources and ttl.",
+	}, h.mcpGetTemplate)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_budget",
+		Description: "Get your quota, resource usage and cost budget.",
+	}, h.mcpGetBudget)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_capacity",
+		Description: "Get each provider's capacity pool and free resources.",
+	}, h.mcpGetCapacity)
+
+	handler := mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return s },
+		&mcp.StreamableHTTPOptions{Stateless: true},
+	)
+	return mcpauth.RequireBearerToken(
+		h.verifyMCPToken,
+		&mcpauth.RequireBearerTokenOptions{AllowMissingExpiration: true},
+	)(handler)
 }
 
 func (h *Handler) verifyMCPToken(ctx context.Context, token string, _ *http.Request) (*mcpauth.TokenInfo, error) {
