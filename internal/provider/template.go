@@ -19,6 +19,7 @@ type Workload struct {
 	Resources   Resources         `yaml:"resources" json:"resources"`
 	Healthcheck string            `yaml:"healthcheck" json:"healthcheck"`
 	Env         map[string]string `yaml:"env" json:"env"`
+	Aliases     []string          `yaml:"aliases" json:"aliases,omitempty"`
 }
 
 type Service struct {
@@ -27,6 +28,7 @@ type Service struct {
 	Resources   Resources         `yaml:"resources" json:"resources"`
 	Env         map[string]string `yaml:"env" json:"env"`
 	Healthcheck string            `yaml:"healthcheck" json:"healthcheck"`
+	Aliases     []string          `yaml:"aliases" json:"aliases,omitempty"`
 }
 
 type Resources struct {

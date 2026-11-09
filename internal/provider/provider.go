@@ -28,6 +28,7 @@ type Status string
 const (
 	StatusRunning   Status = "running"
 	StatusStarting  Status = "starting"
+	StatusDegraded  Status = "degraded"
 	StatusUnhealthy Status = "unhealthy"
 	StatusStopped   Status = "stopped"
 	StatusMissing   Status = "missing"

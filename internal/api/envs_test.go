@@ -369,6 +369,19 @@ func TestCreateEnvBadRequest(t *testing.T) {
 				tpl(m)["services"].([]any)[0].(map[string]any)["name"] = "workload"
 			})
 		}, want: "reserved or duplicated"},
+		{name: "alias with uppercase", body: func(t *testing.T) string {
+			return withBody(t, func(m map[string]any) { tpl(m)["workload"].(map[string]any)["aliases"] = []string{"Keel"} })
+		}, want: "workload alias"},
+		{name: "alias too long", body: func(t *testing.T) string {
+			return withBody(t, func(m map[string]any) {
+				tpl(m)["services"].([]any)[0].(map[string]any)["aliases"] = []string{strings.Repeat("k", 23)}
+			})
+		}, want: "service postgres alias"},
+		{name: "alias shadows service", body: func(t *testing.T) string {
+			return withBody(t, func(m map[string]any) {
+				tpl(m)["services"].([]any)[0].(map[string]any)["aliases"] = []string{"redis"}
+			})
+		}, want: "not a service name"},
 		{name: "service without image", body: func(t *testing.T) string {
 			return withBody(t, func(m map[string]any) {
 				delete(tpl(m)["services"].([]any)[0].(map[string]any), "image")

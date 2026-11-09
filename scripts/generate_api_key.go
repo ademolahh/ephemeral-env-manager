@@ -56,7 +56,7 @@ func main() {
 			id, err := db.CreateCaller(ctx, tx, db.NewCaller{
 				Role:            db.Role(*role),
 				PermittedEnv:    permitted,
-				Quota:           provider.Resources{CPUCore: 4, RAMGB: 16, DiskGB: 50},
+				Quota:           provider.Resources{CPUCore: 5, RAMGB: 16, DiskGB: 50},
 				CostBudgetTotal: 10000,
 				BudgetExpiresAt: time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second),
 			})

@@ -95,6 +95,58 @@ func TestCreateConnectsProxy(t *testing.T) {
 	}
 }
 
+func TestAddressRoutesToSharedAlias(t *testing.T) {
+	d := testDocker(t)
+	d.proxy = startProxy(t, d)
+	ctx := context.Background()
+	id := newEnvID(t, d)
+
+	node := provider.Service{Image: testImage, Resources: provider.Resources{CPUCore: 1, RAMGB: 1}, Aliases: []string{"keel"}}
+	first, second := node, node
+	first.Name, second.Name = "keel-1", "keel-2"
+	tpl := provider.Template{
+		Workload: provider.Workload{Ports: []int{6379}, Resources: provider.Resources{CPUCore: 1, RAMGB: 1}, Aliases: []string{"keel"}},
+		Services: []provider.Service{first, second, {Name: "cache", Image: testImage, Resources: provider.Resources{CPUCore: 1, RAMGB: 1}}},
+	}
+	if _, err := d.Create(ctx, id, testImage, tpl); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	addr, err := d.Address(ctx, id)
+	if err != nil {
+		t.Fatalf("Address() error = %v", err)
+	}
+	host := "eem-" + id + "-keel"
+	if want := host + ":6379"; addr != want {
+		t.Fatalf("Address() = %q, want %q", addr, want)
+	}
+
+	if _, err := d.cli.ContainerStop(ctx, workloadName(id), client.ContainerStopOptions{}); err != nil {
+		t.Fatalf("stop workload: %v", err)
+	}
+	if got, err := d.Status(ctx, id); err != nil || got != provider.StatusDegraded {
+		t.Errorf("Status() with workload stopped = %s, %v, want degraded", got, err)
+	}
+
+	reached := false
+	for range 20 {
+		if execExitCode(t, d, d.proxy, "redis-cli", "-h", host, "-p", "6379", "ping") == 0 {
+			reached = true
+			break
+		}
+	}
+	if !reached {
+		t.Errorf("proxy cannot reach a remaining node at %s", addr)
+	}
+
+	if _, err := d.cli.ContainerStop(ctx, "eem-"+id+"-keel-1", client.ContainerStopOptions{}); err != nil {
+		t.Fatalf("stop keel-1: %v", err)
+	}
+	if got, err := d.Status(ctx, id); err != nil || got != provider.StatusStopped {
+		t.Errorf("Status() with majority stopped = %s, %v, want stopped", got, err)
+	}
+}
+
 func TestDeleteDisconnectsProxy(t *testing.T) {
 	d := testDocker(t)
 	d.proxy = startProxy(t, d)

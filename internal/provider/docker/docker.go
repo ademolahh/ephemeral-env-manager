@@ -23,6 +23,7 @@ import (
 const (
 	envLabel  = "eem.env"
 	portLabel = "eem.port"
+	nodeLabel = "eem.node"
 )
 
 var ErrUnlimitedResources = errors.New("cpu and ram limits must be at least 1, docker treats 0 as unlimited")
@@ -97,9 +98,14 @@ func (d *Docker) Address(ctx context.Context, id string) (string, error) {
 		return "", fmt.Errorf("address env %s: %w", id, err)
 	}
 
-	port := res.Container.Config.Labels[portLabel]
+	labels := res.Container.Config.Labels
+	port := labels[portLabel]
 	if port == "" {
 		return "", nil
+	}
+
+	if alias := labels[nodeLabel]; alias != "" {
+		return scopedAlias(id, alias) + ":" + port, nil
 	}
 
 	return name + ":" + port, nil
@@ -204,6 +210,11 @@ func (d *Docker) create(ctx context.Context, id, workload string, temp provider.
 		}
 	}
 
+	var route string
+	if len(temp.Workload.Aliases) > 0 {
+		route = temp.Workload.Aliases[0]
+	}
+
 	var wg sync.WaitGroup
 	errs := make([]error, len(temp.Services))
 	for i, s := range temp.Services {
@@ -211,11 +222,11 @@ func (d *Docker) create(ctx context.Context, id, workload string, temp provider.
 			cfg := &container.Config{
 				Image:       s.Image,
 				Env:         envList(s.Env),
-				Labels:      labels,
+				Labels:      nodeLabels(labels, route, s.Aliases),
 				Healthcheck: healthConfig(s.Healthcheck),
 			}
 
-			if _, err := d.run(ctx, id+"-"+s.Name, net, s.Name, cfg, s.Resources); err != nil {
+			if _, err := d.run(ctx, id+"-"+s.Name, net, aliasList(id, s.Name, s.Aliases), cfg, s.Resources); err != nil {
 				errs[i] = fmt.Errorf("service %s: %w", s.Name, err)
 			}
 		})
@@ -235,12 +246,12 @@ func (d *Docker) create(ctx context.Context, id, workload string, temp provider.
 		ports[port] = struct{}{}
 	}
 
-	workloadLabels := maps.Clone(labels)
+	workloadLabels := nodeLabels(labels, route, temp.Workload.Aliases)
 	if len(temp.Workload.Ports) > 0 {
 		workloadLabels[portLabel] = strconv.Itoa(temp.Workload.Ports[0])
 	}
 
-	containerID, err := d.run(ctx, id+"-workload", net, "workload", &container.Config{
+	containerID, err := d.run(ctx, id+"-workload", net, aliasList(id, "workload", temp.Workload.Aliases), &container.Config{
 		Image:        workload,
 		Env:          envList(temp.Workload.Env),
 		ExposedPorts: ports,
@@ -254,7 +265,7 @@ func (d *Docker) create(ctx context.Context, id, workload string, temp provider.
 	return containerID, nil
 }
 
-func (d *Docker) run(ctx context.Context, name, net, alias string, cfg *container.Config, res provider.Resources) (string, error) {
+func (d *Docker) run(ctx context.Context, name, net string, aliases []string, cfg *container.Config, res provider.Resources) (string, error) {
 	if res.CPUCore < 1 || res.RAMGB < 1 {
 		return "", fmt.Errorf("%w: cpu_core %d, ram_gb %d", ErrUnlimitedResources, res.CPUCore, res.RAMGB)
 	}
@@ -273,7 +284,7 @@ func (d *Docker) run(ctx context.Context, name, net, alias string, cfg *containe
 		},
 		NetworkingConfig: &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
-				net: {Aliases: []string{alias}},
+				net: {Aliases: aliases},
 			},
 		},
 	})
@@ -376,9 +387,19 @@ func aggregateStatus(id string, containers []container.Summary) provider.Status 
 	}
 
 	status := provider.StatusRunning
+	nodes, down := 0, 0
 	for _, c := range containers {
+		node := c.Labels[nodeLabel] != ""
+		if node {
+			nodes++
+		}
+
 		if c.State != container.StateRunning {
-			return provider.StatusStopped
+			if !node {
+				return provider.StatusStopped
+			}
+			down++
+			continue
 		}
 
 		if c.Health == nil {
@@ -387,6 +408,10 @@ func aggregateStatus(id string, containers []container.Summary) provider.Status 
 
 		switch c.Health.Status {
 		case container.Unhealthy:
+			if node {
+				down++
+				continue
+			}
 			status = provider.StatusUnhealthy
 		case container.Starting:
 			if status == provider.StatusRunning {
@@ -395,7 +420,16 @@ func aggregateStatus(id string, containers []container.Summary) provider.Status 
 		}
 	}
 
-	return status
+	switch {
+	case down == 0:
+		return status
+	case down*2 >= nodes:
+		return provider.StatusStopped
+	case status == provider.StatusUnhealthy:
+		return status
+	default:
+		return provider.StatusDegraded
+	}
 }
 
 func healthConfig(cmd string) *container.HealthConfig {
@@ -411,6 +445,26 @@ func healthConfig(cmd string) *container.HealthConfig {
 		StartPeriod:   time.Minute,
 		StartInterval: time.Second,
 	}
+}
+
+func nodeLabels(base map[string]string, route string, aliases []string) map[string]string {
+	labels := maps.Clone(base)
+	if route != "" && slices.Contains(aliases, route) {
+		labels[nodeLabel] = route
+	}
+	return labels
+}
+
+func aliasList(id, name string, aliases []string) []string {
+	list := []string{name}
+	for _, a := range aliases {
+		list = append(list, a, scopedAlias(id, a))
+	}
+	return list
+}
+
+func scopedAlias(id, alias string) string {
+	return "eem-" + id + "-" + alias
 }
 
 func workloadName(id string) string {

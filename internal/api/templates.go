@@ -16,7 +16,10 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
-var serviceName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+var (
+	serviceName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+	aliasName   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,20}[a-z0-9])?$`)
+)
 
 type templateRequest struct {
 	provider.Template
@@ -208,7 +211,26 @@ func (t templateRequest) toTemplate() (provider.Template, error) {
 		}
 	}
 
+	if err := validAliases("workload", tpl.Workload.Aliases, seen); err != nil {
+		return provider.Template{}, err
+	}
+
+	for _, s := range tpl.Services {
+		if err := validAliases("service "+s.Name, s.Aliases, seen); err != nil {
+			return provider.Template{}, err
+		}
+	}
+
 	return tpl, nil
+}
+
+func validAliases(what string, aliases []string, names map[string]bool) error {
+	for _, a := range aliases {
+		if !aliasName.MatchString(a) || names[a] {
+			return fmt.Errorf("%s alias %q must be up to 22 lowercase letters, digits and hyphens and not a service name", what, a)
+		}
+	}
+	return nil
 }
 
 func validResources(what string, r provider.Resources) error {

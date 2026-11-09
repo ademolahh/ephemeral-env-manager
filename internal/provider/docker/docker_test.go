@@ -401,6 +401,12 @@ func TestAggregateStatus(t *testing.T) {
 		c.Names = []string{"/eem-" + id + "-cache"}
 		return c
 	}
+	node := func(c container.Summary) container.Summary {
+		c.Labels = map[string]string{nodeLabel: "keel"}
+		return c
+	}
+	running := node(service(container.StateRunning, ""))
+	exited := node(service(container.StateExited, ""))
 
 	tests := []struct {
 		name       string
@@ -415,6 +421,13 @@ func TestAggregateStatus(t *testing.T) {
 		{name: "unhealthy beats starting", containers: []container.Summary{workload(container.StateRunning, container.Starting), service(container.StateRunning, container.Unhealthy)}, want: provider.StatusUnhealthy},
 		{name: "service exited", containers: []container.Summary{workload(container.StateRunning, ""), service(container.StateExited, "")}, want: provider.StatusStopped},
 		{name: "workload created not started", containers: []container.Summary{workload(container.StateCreated, "")}, want: provider.StatusStopped},
+		{name: "all nodes up", containers: []container.Summary{node(workload(container.StateRunning, "")), running, running}, want: provider.StatusRunning},
+		{name: "workload node down, majority up", containers: []container.Summary{node(workload(container.StateExited, "")), running, running}, want: provider.StatusDegraded},
+		{name: "unhealthy node, majority up", containers: []container.Summary{node(workload(container.StateRunning, container.Unhealthy)), running, running}, want: provider.StatusDegraded},
+		{name: "node down beats starting", containers: []container.Summary{node(workload(container.StateRunning, container.Starting)), running, exited}, want: provider.StatusDegraded},
+		{name: "half the nodes down", containers: []container.Summary{node(workload(container.StateRunning, "")), exited}, want: provider.StatusStopped},
+		{name: "majority down", containers: []container.Summary{node(workload(container.StateExited, "")), running, exited}, want: provider.StatusStopped},
+		{name: "non-node service down with nodes up", containers: []container.Summary{node(workload(container.StateRunning, "")), running, running, service(container.StateExited, "")}, want: provider.StatusStopped},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
