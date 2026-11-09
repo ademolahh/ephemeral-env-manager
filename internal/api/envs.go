@@ -44,47 +44,18 @@ type createEnvRequest struct {
 }
 
 func (h *Handler) CreateEnv(w http.ResponseWriter, r *http.Request) {
-	key := r.Header.Get("Idempotency-Key")
-	if len(key) > maxIdempotencyKeyLen {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Idempotency-Key longer than %d characters", maxIdempotencyKeyLen))
-		return
-	}
-
 	var req createEnvRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
 
-	tr, ok := h.templateFor(w, r, req.Template)
-	if !ok {
-		return
-	}
-
-	if err := req.override(&tr); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	tpl, err := tr.toTemplate()
+	cr, err := h.createRequest(r.Context(), callerFrom(r.Context()).ID, req, r.Header.Get("Idempotency-Key"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeServiceError(w, "create environment", err)
 		return
 	}
 
-	if req.Workload == "" {
-		writeError(w, http.StatusBadRequest, "workload is required")
-		return
-	}
-
-	e, err := h.envs.Create(r.Context(), env.CreateRequest{
-		CallerID:       callerFrom(r.Context()).ID,
-		Type:           req.Type,
-		Provider:       req.Provider,
-		Workload:       req.Workload,
-		Template:       tpl,
-		IdempotencyKey: key,
-	})
-
+	e, err := h.envs.Create(r.Context(), cr)
 	if err != nil {
 		writeServiceError(w, "create environment", err)
 		return
@@ -92,6 +63,39 @@ func (h *Handler) CreateEnv(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Location", "/envs/"+e.ID.String())
 	writeJSON(w, http.StatusAccepted, e)
+}
+
+func (h *Handler) createRequest(ctx context.Context, callerID uuid.UUID, req createEnvRequest, key string) (env.CreateRequest, error) {
+	if len(key) > maxIdempotencyKeyLen {
+		return env.CreateRequest{}, badRequest("Idempotency-Key longer than %d characters", maxIdempotencyKeyLen)
+	}
+
+	tr, err := h.resolveTemplate(ctx, req.Template)
+	if err != nil {
+		return env.CreateRequest{}, err
+	}
+
+	if err := req.override(&tr); err != nil {
+		return env.CreateRequest{}, badRequest("%s", err)
+	}
+
+	tpl, err := tr.toTemplate()
+	if err != nil {
+		return env.CreateRequest{}, badRequest("%s", err)
+	}
+
+	if req.Workload == "" {
+		return env.CreateRequest{}, badRequest("workload is required")
+	}
+
+	return env.CreateRequest{
+		CallerID:       callerID,
+		Type:           req.Type,
+		Provider:       req.Provider,
+		Workload:       req.Workload,
+		Template:       tpl,
+		IdempotencyKey: key,
+	}, nil
 }
 
 func (h *Handler) GetEnv(w http.ResponseWriter, r *http.Request) {
@@ -124,21 +128,28 @@ func (h *Handler) ListEnvs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	callerID := callerFrom(r.Context()).ID
-	envs, err := db.ListCallerEnvironments(r.Context(), h.db, callerID, db.EnvironmentFilter{
-		Status: status,
-		Limit:  limit + 1,
-		Offset: (page - 1) * limit,
-	})
+	resp, err := h.listEnvs(r.Context(), callerFrom(r.Context()).ID, status, page, limit)
 	if err != nil {
 		writeServiceError(w, "list environments", err)
 		return
 	}
 
-	counts, err := db.CountCallerEnvironments(r.Context(), h.db, callerID)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) listEnvs(ctx context.Context, callerID uuid.UUID, status db.EnvStatus, page, limit int) (listEnvsResponse, error) {
+	envs, err := db.ListCallerEnvironments(ctx, h.db, callerID, db.EnvironmentFilter{
+		Status: status,
+		Limit:  limit + 1,
+		Offset: (page - 1) * limit,
+	})
 	if err != nil {
-		writeServiceError(w, "count environments", err)
-		return
+		return listEnvsResponse{}, err
+	}
+
+	counts, err := db.CountCallerEnvironments(ctx, h.db, callerID)
+	if err != nil {
+		return listEnvsResponse{}, err
 	}
 
 	resp := listEnvsResponse{Environments: envs, Page: page, Limit: limit, Counts: map[db.EnvStatus]int{}}
@@ -156,17 +167,14 @@ func (h *Handler) ListEnvs(w http.ResponseWriter, r *http.Request) {
 		resp.Total += counts[s]
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	return resp, nil
 }
 
 func parseListParams(r *http.Request) (db.EnvStatus, int, int, error) {
 	q := r.URL.Query()
-	var status db.EnvStatus
-	if v := q.Get("status"); v != "" {
-		status = db.EnvStatus(strings.ToUpper(v))
-		if !slices.Contains(envStatuses, status) {
-			return "", 0, 0, fmt.Errorf("status %q must be one of PROVISIONING, RUNNING, DELETING, DELETED, FAILED", v)
-		}
+	status, err := envStatus(q.Get("status"))
+	if err != nil {
+		return "", 0, 0, err
 	}
 
 	page, err := positiveParam(q.Get("page"), 1, 0)
@@ -180,6 +188,19 @@ func parseListParams(r *http.Request) (db.EnvStatus, int, int, error) {
 	}
 
 	return status, page, limit, nil
+}
+
+func envStatus(v string) (db.EnvStatus, error) {
+	if v == "" {
+		return "", nil
+	}
+
+	status := db.EnvStatus(strings.ToUpper(v))
+	if !slices.Contains(envStatuses, status) {
+		return "", fmt.Errorf("status %q must be one of PROVISIONING, RUNNING, DELETING, DELETED, FAILED", v)
+	}
+
+	return status, nil
 }
 
 func positiveParam(v string, def, max int) (int, error) {

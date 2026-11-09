@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -117,18 +118,27 @@ func (h *Handler) GetBudget(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	budget, err := db.GetCallerBudget(r.Context(), h.db, id)
+	resp, err := h.callerBudget(r.Context(), id)
 	if err != nil {
 		writeServiceError(w, "get budget", err)
 		return
 	}
-	resourcesUsed, err := db.CallerUsage(r.Context(), h.db, id)
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) callerBudget(ctx context.Context, id uuid.UUID) (budgetResponse, error) {
+	budget, err := db.GetCallerBudget(ctx, h.db, id)
 	if err != nil {
-		writeServiceError(w, "get resource usage", err)
-		return
+		return budgetResponse{}, err
 	}
 
-	writeJSON(w, http.StatusOK, budgetResponse{
+	resourcesUsed, err := db.CallerUsage(ctx, h.db, id)
+	if err != nil {
+		return budgetResponse{}, err
+	}
+
+	return budgetResponse{
 		CallerID:        id,
 		Currency:        "USD",
 		CostBudget:      budget.CostBudgetTotal,
@@ -138,7 +148,7 @@ func (h *Handler) GetBudget(w http.ResponseWriter, r *http.Request) {
 		BudgetExpiresAt: budget.BudgetExpiresAt,
 		Quota:           budget.Quota,
 		ResourcesUsed:   resourcesUsed,
-	})
+	}, nil
 }
 
 func (h *Handler) SetBudget(w http.ResponseWriter, r *http.Request) {

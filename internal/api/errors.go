@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -20,7 +21,23 @@ func writeServiceError(w http.ResponseWriter, op string, err error) {
 	writeError(w, status, err.Error())
 }
 
+type badRequestError struct {
+	msg string
+}
+
+func (e *badRequestError) Error() string {
+	return e.msg
+}
+
+func badRequest(format string, args ...any) error {
+	return &badRequestError{msg: fmt.Sprintf(format, args...)}
+}
+
 func errorStatus(err error) int {
+	if _, ok := errors.AsType[*badRequestError](err); ok {
+		return http.StatusBadRequest
+	}
+
 	switch {
 	case errors.Is(err, env.ErrInvalidEnvType),
 		errors.Is(err, env.ErrNoProvider),

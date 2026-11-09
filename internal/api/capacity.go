@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -28,10 +29,19 @@ type capacityResponse struct {
 }
 
 func (h *Handler) GetCapacity(w http.ResponseWriter, r *http.Request) {
-	pools, err := db.ListCapacityPools(r.Context(), h.db)
+	resp, err := h.capacity(r.Context())
 	if err != nil {
 		writeServiceError(w, "get capacity", err)
 		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) capacity(ctx context.Context) (capacityResponse, error) {
+	pools, err := db.ListCapacityPools(ctx, h.db)
+	if err != nil {
+		return capacityResponse{}, err
 	}
 
 	resp := capacityResponse{Pools: make([]poolResponse, 0, len(pools))}
@@ -47,7 +57,7 @@ func (h *Handler) GetCapacity(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	return resp, nil
 }
 
 func (h *Handler) SetCapacity(w http.ResponseWriter, r *http.Request) {

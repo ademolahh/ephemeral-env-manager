@@ -34,6 +34,7 @@ func Routes(h *Handler) http.Handler {
 	root.Handle("GET /styles.css", frontend)
 	root.HandleFunc("POST /callers", h.CreateCaller)
 	root.HandleFunc("POST /admin/login", h.AdminLogin)
+	root.Handle("/mcp", h.MCP())
 	root.Handle("/", h.authenticate(mux))
 	return root
 }

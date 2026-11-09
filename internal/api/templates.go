@@ -2,10 +2,10 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"regexp"
 	"slices"
@@ -40,14 +40,14 @@ func (f *templateField) UnmarshalJSON(b []byte) error {
 }
 
 type resourceOverrides struct {
-	Workload *resourcePatch           `json:"workload"`
-	Services map[string]resourcePatch `json:"services"`
+	Workload *resourcePatch           `json:"workload,omitempty"`
+	Services map[string]resourcePatch `json:"services,omitempty"`
 }
 
 type resourcePatch struct {
-	CPUCore *int `json:"cpu_core"`
-	RAMGB   *int `json:"ram_gb"`
-	DiskGB  *int `json:"disk_gb"`
+	CPUCore *int `json:"cpu_core,omitempty"`
+	RAMGB   *int `json:"ram_gb,omitempty"`
+	DiskGB  *int `json:"disk_gb,omitempty"`
 }
 
 func (p resourcePatch) apply(r *provider.Resources) {
@@ -86,36 +86,31 @@ func (req createEnvRequest) override(tr *templateRequest) error {
 	return nil
 }
 
-func (h *Handler) templateFor(w http.ResponseWriter, r *http.Request, f templateField) (templateRequest, bool) {
+func (h *Handler) resolveTemplate(ctx context.Context, f templateField) (templateRequest, error) {
 	if f.Inline != nil {
-		return *f.Inline, true
+		return *f.Inline, nil
 	}
 
 	name, version, ok := strings.Cut(f.Ref, "@")
 	if !ok || name == "" || version == "" {
-		writeError(w, http.StatusBadRequest, "template must be an object or name@version")
-		return templateRequest{}, false
+		return templateRequest{}, badRequest("template must be an object or name@version")
 	}
 
-	spec, err := db.GetTemplate(r.Context(), h.db, name, version)
+	spec, err := db.GetTemplate(ctx, h.db, name, version)
 	if errors.Is(err, db.ErrTemplateNotFound) {
-		writeError(w, http.StatusBadRequest, "template "+f.Ref+" not found")
-		return templateRequest{}, false
+		return templateRequest{}, badRequest("template %s not found", f.Ref)
 	}
 
 	if err != nil {
-		writeServiceError(w, "create environment", err)
-		return templateRequest{}, false
+		return templateRequest{}, err
 	}
 
 	var tr templateRequest
 	if err := json.Unmarshal(spec, &tr); err != nil {
-		log.Printf("decode template %s: %v", f.Ref, err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return templateRequest{}, false
+		return templateRequest{}, fmt.Errorf("decode template %s: %w", f.Ref, err)
 	}
 
-	return tr, true
+	return tr, nil
 }
 
 func (h *Handler) CreateTemplate(w http.ResponseWriter, r *http.Request) {
