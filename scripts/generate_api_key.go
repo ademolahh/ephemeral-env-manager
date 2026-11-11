@@ -19,10 +19,11 @@ import (
 func main() {
 	callerFlag := flag.String("caller-id", "", "existing caller UUID; omit to create a new caller")
 	expiresIn := flag.Duration("expires-in", 30*24*time.Hour, "API key validity (for example, 720h)")
-	role := flag.String("role", string(db.RoleUser), "role of a new caller: user or agent")
+	role := flag.String("role", string(db.RoleUser), "key role: user or agent")
+	name := flag.String("name", "cli", "key name")
 	flag.Parse()
-	if flag.NArg() != 0 || *expiresIn <= 0 || (*role != string(db.RoleUser) && *role != string(db.RoleAgent)) {
-		log.Fatal("usage: make api-key [ARGS=\"-caller-id UUID -role user|agent -expires-in 720h\"]")
+	if flag.NArg() != 0 || *expiresIn <= 0 || *name == "" || (*role != string(db.RoleUser) && *role != string(db.RoleAgent)) {
+		log.Fatal("usage: make api-key [ARGS=\"-caller-id UUID -role user|agent -name NAME -expires-in 720h\"]")
 	}
 
 	permitted := db.EnvRegularTesting
@@ -54,7 +55,6 @@ func main() {
 	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
 		if callerID == uuid.Nil {
 			id, err := db.CreateCaller(ctx, tx, db.NewCaller{
-				Role:            db.Role(*role),
 				PermittedEnv:    permitted,
 				Quota:           provider.Resources{CPUCore: 5, RAMGB: 16, DiskGB: 50},
 				CostBudgetTotal: 10000,
@@ -68,7 +68,13 @@ func main() {
 			return err
 		}
 
-		_, err := db.CreateAPIKey(ctx, tx, callerID, hash, expiresAt)
+		_, err := db.CreateAPIKey(ctx, tx, db.NewAPIKey{
+			CallerID:  callerID,
+			Name:      *name,
+			Hash:      hash,
+			Role:      db.Role(*role),
+			ExpiresAt: expiresAt,
+		})
 		return err
 	})
 	if err != nil {

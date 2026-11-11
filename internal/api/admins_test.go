@@ -9,20 +9,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/auth"
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 )
 
-var testAdminSecret = []byte(strings.Repeat("t", auth.MinAdminSecretSize))
-
 func (s server) adminToken(t *testing.T) string {
 	t.Helper()
-	token, _, err := auth.IssueAdminToken(testAdminSecret, uuid.New(), time.Hour)
+	token, _, err := s.sessions.CreateAdmin(context.Background(), uuid.New(), time.Hour)
 	if err != nil {
-		t.Fatalf("IssueAdminToken() error = %v", err)
+		t.Fatalf("CreateAdmin() error = %v", err)
 	}
 	return token
 }
@@ -71,17 +68,17 @@ func TestAdminLogin(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode login: %v", err)
 	}
-	want := before.Add(adminTokenTTL)
+	want := before.Add(adminSessionTTL)
 	if got.ExpiresAt.Before(want.Add(-time.Minute)) || got.ExpiresAt.After(want.Add(time.Minute)) {
 		t.Errorf("expires_at = %v, want about %v", got.ExpiresAt, want)
 	}
 
-	subject, err := auth.ParseAdminToken(testAdminSecret, got.Token)
+	sess, err := s.sessions.Get(context.Background(), got.Token)
 	if err != nil {
-		t.Fatalf("ParseAdminToken() error = %v", err)
+		t.Fatalf("sessions.Get() error = %v", err)
 	}
-	if subject != id {
-		t.Errorf("token subject = %s, want admin %s", subject, id)
+	if sess.AdminID == nil || *sess.AdminID != id || sess.CallerID != nil {
+		t.Errorf("session = %+v, want admin %s", sess, id)
 	}
 
 	rec = s.put(t, got.Token, "/capacity/docker", `{"total": {"cpu_core": 200, "ram_gb": 200, "disk_gb": 2000}}`)
@@ -123,39 +120,30 @@ func TestAdminLoginRejected(t *testing.T) {
 func TestAdminTokenRejected(t *testing.T) {
 	s := newServer(t)
 	body := `{"total": {"cpu_core": 1, "ram_gb": 1, "disk_gb": 1}}`
-	expired, _, err := auth.IssueAdminToken(testAdminSecret, uuid.New(), -time.Hour)
-	if err != nil {
-		t.Fatalf("IssueAdminToken() error = %v", err)
-	}
-	forged, _, err := auth.IssueAdminToken([]byte(strings.Repeat("f", auth.MinAdminSecretSize)), uuid.New(), time.Hour)
-	if err != nil {
-		t.Fatalf("IssueAdminToken() error = %v", err)
-	}
-	unsigned, err := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.RegisteredClaims{
-		Issuer:    "eem",
-		Subject:   uuid.NewString(),
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-	}).SignedString(jwt.UnsafeAllowNoneSignatureType)
-	if err != nil {
-		t.Fatalf("sign none token: %v", err)
+	loggedOut := s.adminToken(t)
+	if rec := s.request(t, http.MethodPost, "/auth/logout", loggedOut); rec.Code != http.StatusNoContent {
+		t.Fatalf("logout = %d, want 204; body %s", rec.Code, rec.Body)
 	}
 
-	for name, token := range map[string]string{"expired": expired, "other secret": forged, "alg none": unsigned, "garbage": "a.b.c"} {
-		if rec := s.put(t, token, "/capacity/docker", body); rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "admin token") {
-			t.Errorf("%s token: got %d %s, want 401 admin token", name, rec.Code, rec.Body)
+	for name, token := range map[string]string{"logged out": loggedOut, "unknown": auth.RandomString(), "garbage": "a.b.c"} {
+		if rec := s.put(t, token, "/capacity/docker", body); rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s token: got %d %s, want 401", name, rec.Code, rec.Body)
 		}
 	}
 }
 
-func TestAdminTokenWithoutSecret(t *testing.T) {
+func TestAdminSessionExpires(t *testing.T) {
 	s := newServer(t)
-	handler := Routes(NewHandler(s.tx, s.m, nil))
-	req := httptest.NewRequest(http.MethodPut, "/capacity/docker", strings.NewReader(`{"total": {"cpu_core": 1, "ram_gb": 1, "disk_gb": 1}}`))
-	req.Header.Set("Authorization", "Bearer "+s.adminToken(t))
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code == http.StatusNoContent {
-		t.Errorf("admin action accepted by a handler with no secret")
+	token, _, err := s.sessions.CreateAdmin(context.Background(), uuid.New(), time.Second)
+	if err != nil {
+		t.Fatalf("CreateAdmin() error = %v", err)
+	}
+	if rec := s.request(t, http.MethodGet, "/capacity", token); rec.Code != http.StatusOK {
+		t.Fatalf("fresh session = %d, want 200", rec.Code)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if rec := s.request(t, http.MethodGet, "/capacity", token); rec.Code != http.StatusUnauthorized {
+		t.Errorf("expired session = %d, want 401", rec.Code)
 	}
 }
 

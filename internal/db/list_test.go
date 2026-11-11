@@ -90,7 +90,7 @@ func TestCountCallerEnvironments(t *testing.T) {
 	}
 	createTestEnvironment(t, tx, newEnvironment(callerID))
 
-	counts, err := CountCallerEnvironments(context.Background(), tx, callerID)
+	counts, err := CountCallerEnvironments(context.Background(), tx, callerID, nil)
 	if err != nil {
 		t.Fatalf("CountCallerEnvironments() error = %v", err)
 	}

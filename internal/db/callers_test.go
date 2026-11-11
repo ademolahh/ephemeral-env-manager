@@ -16,7 +16,6 @@ import (
 type callerRow struct {
 	GithubLogin     *string
 	GithubID        *string
-	Role            string
 	PermittedEnv    string
 	Quota           provider.Resources
 	CostBudgetTotal int64
@@ -28,12 +27,12 @@ func getCaller(t *testing.T, tx pgx.Tx, id uuid.UUID) callerRow {
 	t.Helper()
 	var r callerRow
 	err := tx.QueryRow(context.Background(), `
-		SELECT github_login, github_id, role::text, permitted_env::text,
+		SELECT github_login, github_id, permitted_env::text,
 			quota_cpu_cores, quota_ram_gb, quota_disk_gb,
 			cost_budget_total, budget_expires_at, budget_set_at
 		FROM callers WHERE id = $1`, id,
 	).Scan(
-		&r.GithubLogin, &r.GithubID, &r.Role, &r.PermittedEnv,
+		&r.GithubLogin, &r.GithubID, &r.PermittedEnv,
 		&r.Quota.CPUCore, &r.Quota.RAMGB, &r.Quota.DiskGB,
 		&r.CostBudgetTotal, &r.BudgetExpiresAt, &r.BudgetSetAt,
 	)
@@ -47,7 +46,6 @@ func newCaller() NewCaller {
 	return NewCaller{
 		GithubLogin:     new("octocat"),
 		GithubID:        new("583231"),
-		Role:            RoleUser,
 		PermittedEnv:    EnvPRReview,
 		Quota:           provider.Resources{CPUCore: 4, RAMGB: 16, DiskGB: 50},
 		CostBudgetTotal: 1234,
@@ -74,9 +72,6 @@ func TestCreateCaller(t *testing.T) {
 	if got.GithubID == nil || *got.GithubID != *c.GithubID {
 		t.Errorf("github_id = %v, want %q", got.GithubID, *c.GithubID)
 	}
-	if got.Role != string(c.Role) {
-		t.Errorf("role = %q, want %q", got.Role, c.Role)
-	}
 	if got.PermittedEnv != string(c.PermittedEnv) {
 		t.Errorf("permitted_env = %q, want %q", got.PermittedEnv, c.PermittedEnv)
 	}
@@ -96,7 +91,6 @@ func TestCreateCallerNullGithub(t *testing.T) {
 	c := newCaller()
 	c.GithubLogin = nil
 	c.GithubID = nil
-	c.Role = RoleAgent
 
 	first, err := CreateCaller(context.Background(), tx, c)
 	if err != nil {
@@ -141,11 +135,6 @@ func TestCreateCallerErrors(t *testing.T) {
 			name:   "negative cost budget",
 			mutate: func(c *NewCaller) { c.CostBudgetTotal = -1 },
 			code:   "23514",
-		},
-		{
-			name:   "invalid role",
-			mutate: func(c *NewCaller) { c.Role = "superuser" },
-			code:   "22P02",
 		},
 		{
 			name:   "invalid env",
@@ -236,8 +225,8 @@ func TestSetCallerBudget(t *testing.T) {
 	if !got.BudgetSetAt.Equal(now) {
 		t.Errorf("budget_set_at = %v, want %v", got.BudgetSetAt, now)
 	}
-	if got.Role != string(c.Role) || got.PermittedEnv != string(c.PermittedEnv) {
-		t.Errorf("role, permitted_env = %q, %q, want unchanged %q, %q", got.Role, got.PermittedEnv, c.Role, c.PermittedEnv)
+	if got.PermittedEnv != string(c.PermittedEnv) {
+		t.Errorf("permitted_env = %q, want unchanged %q", got.PermittedEnv, c.PermittedEnv)
 	}
 }
 
@@ -288,8 +277,8 @@ func TestSetCallerGithub(t *testing.T) {
 	if got.GithubID == nil || *got.GithubID != "583231" {
 		t.Errorf("github_id = %v, want %q", got.GithubID, "583231")
 	}
-	if got.Quota != c.Quota || got.Role != string(c.Role) {
-		t.Errorf("quota, role = %+v, %q, want unchanged %+v, %q", got.Quota, got.Role, c.Quota, c.Role)
+	if got.Quota != c.Quota {
+		t.Errorf("quota = %+v, want unchanged %+v", got.Quota, c.Quota)
 	}
 }
 
@@ -343,5 +332,61 @@ func TestSetCallerGithubDuplicateID(t *testing.T) {
 	}
 	if want := "set caller github " + id.String() + ":"; err == nil || !strings.HasPrefix(err.Error(), want) {
 		t.Errorf("SetCallerGithub() error = %v, want %q prefix", err, want)
+	}
+}
+
+func TestUpsertGithubCaller(t *testing.T) {
+	tx := testTx(t)
+	ctx := context.Background()
+	c := newCaller()
+	c.GithubID = new("42")
+	c.GithubLogin = new("octo")
+
+	first, err := UpsertGithubCaller(ctx, tx, c)
+	if err != nil {
+		t.Fatalf("UpsertGithubCaller() error = %v", err)
+	}
+
+	c.GithubLogin = new("octo-renamed")
+	c.CostBudgetTotal = 1
+	second, err := UpsertGithubCaller(ctx, tx, c)
+	if err != nil {
+		t.Fatalf("UpsertGithubCaller() again error = %v", err)
+	}
+	if first != second {
+		t.Errorf("UpsertGithubCaller() ids = %s, %s, want the same caller", first, second)
+	}
+
+	got, err := GetCaller(ctx, tx, first)
+	if err != nil {
+		t.Fatalf("GetCaller() error = %v", err)
+	}
+	if got.GithubLogin == nil || *got.GithubLogin != "octo-renamed" {
+		t.Errorf("github_login = %v, want octo-renamed", got.GithubLogin)
+	}
+	if b, _ := GetCallerBudget(ctx, tx, first); b.CostBudgetTotal == 1 {
+		t.Error("cost budget overwritten on sign-in, want kept")
+	}
+
+	exists, err := GithubCallerExists(ctx, tx, "42")
+	if err != nil || !exists {
+		t.Errorf("GithubCallerExists(42) = %v, %v, want true", exists, err)
+	}
+	if exists, _ := GithubCallerExists(ctx, tx, "43"); exists {
+		t.Error("GithubCallerExists(43) = true, want false")
+	}
+}
+
+func TestUpsertGithubCallerNeedsID(t *testing.T) {
+	c := newCaller()
+	c.GithubID = nil
+	if _, err := UpsertGithubCaller(context.Background(), testTx(t), c); err == nil {
+		t.Error("UpsertGithubCaller() error = nil, want error")
+	}
+}
+
+func TestGetCallerNotFound(t *testing.T) {
+	if _, err := GetCaller(context.Background(), testTx(t), uuid.New()); !errors.Is(err, ErrCallerNotFound) {
+		t.Errorf("GetCaller() error = %v, want ErrCallerNotFound", err)
 	}
 }

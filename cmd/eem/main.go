@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider/docker"
 	"github.com/ademolahh/ephemeral-env-manager/internal/proxy"
+	"github.com/ademolahh/ephemeral-env-manager/internal/session"
 )
 
 func main() {
@@ -28,9 +30,14 @@ func main() {
 		log.Fatal("DATABASE_URL is required")
 	}
 
-	adminSecret := []byte(os.Getenv("ADMIN_JWT_SECRET"))
-	if len(adminSecret) < auth.MinAdminSecretSize {
-		log.Fatalf("ADMIN_JWT_SECRET must be at least %d bytes", auth.MinAdminSecretSize)
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		log.Fatal("REDIS_URL is required")
+	}
+
+	github, err := githubFromEnv()
+	if err != nil {
+		log.Fatalf("github: %v", err)
 	}
 
 	pool, err := db.New(ctx, databaseURL)
@@ -38,6 +45,12 @@ func main() {
 		log.Fatalf("database: %v", err)
 	}
 	defer pool.Close()
+
+	rdb, err := session.Connect(ctx, redisURL)
+	if err != nil {
+		log.Fatalf("redis: %v", err)
+	}
+	defer rdb.Close()
 
 	px, err := proxy.FromEnv()
 	if err != nil {
@@ -64,7 +77,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":8080",
-		Handler:           api.Routes(api.NewHandler(pool, envs, adminSecret)),
+		Handler:           api.Routes(api.NewHandler(pool, envs, session.New(rdb, "eem:"), github)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -85,4 +98,23 @@ func main() {
 
 	log.Print("waiting for in-flight provisioning")
 	envs.Wait()
+}
+
+func githubFromEnv() (*auth.GitHub, error) {
+	clientID := os.Getenv("GITHUB_CLIENT_ID")
+	if clientID == "" {
+		return nil, nil
+	}
+
+	publicURL := strings.TrimSuffix(os.Getenv("PUBLIC_URL"), "/")
+	if publicURL == "" {
+		return nil, errors.New("PUBLIC_URL is required when GITHUB_CLIENT_ID is set")
+	}
+
+	return auth.NewGitHub(auth.GitHubConfig{
+		ClientID:     clientID,
+		ClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
+		RedirectURL:  publicURL + "/auth/github/callback",
+		AllowedUsers: strings.Split(os.Getenv("GITHUB_ALLOWED_USERS"), ","),
+	})
 }

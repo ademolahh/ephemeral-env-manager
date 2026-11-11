@@ -25,7 +25,6 @@ type createCallerRequest struct {
 
 type callerResponse struct {
 	ID              uuid.UUID          `json:"id"`
-	Role            db.Role            `json:"role"`
 	PermittedEnv    db.EnvType         `json:"permitted_env"`
 	GithubLogin     *string            `json:"github_login"`
 	GithubID        *string            `json:"github_id"`
@@ -43,7 +42,6 @@ func (h *Handler) CreateCaller(w http.ResponseWriter, r *http.Request) {
 	c := db.NewCaller{
 		GithubLogin:     optional(req.GithubLogin),
 		GithubID:        optional(req.GithubID),
-		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvRegularTesting,
 		Quota:           defaultQuota,
 		CostBudgetTotal: defaultCostBudget,
@@ -59,7 +57,6 @@ func (h *Handler) CreateCaller(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Location", "/callers/"+id.String()+"/budget")
 	writeJSON(w, http.StatusCreated, callerResponse{
 		ID:              id,
-		Role:            c.Role,
 		PermittedEnv:    c.PermittedEnv,
 		GithubLogin:     c.GithubLogin,
 		GithubID:        c.GithubID,

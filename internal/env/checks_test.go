@@ -37,7 +37,6 @@ func newFixture(t *testing.T, pool provider.Resources) fixture {
 func (f fixture) caller(t *testing.T, mutate func(*db.NewCaller)) uuid.UUID {
 	t.Helper()
 	c := db.NewCaller{
-		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvProdBug,
 		Quota:           provider.Resources{CPUCore: 1000, RAMGB: 1000, DiskGB: 1000},
 		CostBudgetTotal: 100000,
@@ -54,11 +53,17 @@ func (f fixture) caller(t *testing.T, mutate func(*db.NewCaller)) uuid.UUID {
 }
 
 func (f fixture) create(callerID uuid.UUID, typ db.EnvType, r provider.Resources) (uuid.UUID, error) {
+	return f.createWith(callerID, uuid.Nil, typ, r, "")
+}
+
+func (f fixture) createWith(callerID, keyID uuid.UUID, typ db.EnvType, r provider.Resources, idempotencyKey string) (uuid.UUID, error) {
 	defer f.m.WaitReady()
 	e, err := f.m.Create(context.Background(), CreateRequest{
-		CallerID: callerID,
-		Type:     typ,
-		Workload: "app:latest",
+		CallerID:       callerID,
+		APIKeyID:       keyID,
+		IdempotencyKey: idempotencyKey,
+		Type:           typ,
+		Workload:       "app:latest",
 		Template: provider.Template{
 			Name:            "app",
 			Version:         "v1",

@@ -112,7 +112,6 @@ func newFixture(t *testing.T, q db.DBTX) fixture {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
 	callerID, err := db.CreateCaller(ctx, q, db.NewCaller{
-		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvProdBug,
 		Quota:           provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000},
 		CostBudgetTotal: 10000,
@@ -387,7 +386,6 @@ func (f fixture) exec(t *testing.T, sql string, args ...any) {
 func (f fixture) otherCaller(t *testing.T) uuid.UUID {
 	t.Helper()
 	id, err := db.CreateCaller(context.Background(), f.q, db.NewCaller{
-		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvProdBug,
 		Quota:           provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000},
 		CostBudgetTotal: 10000,

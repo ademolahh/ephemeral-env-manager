@@ -76,7 +76,6 @@ func seedPool(t *testing.T, pool *pgxpool.Pool, capacity provider.Resources) *Ma
 func seedCaller(t *testing.T, pool *pgxpool.Pool, quota provider.Resources, budget int64) uuid.UUID {
 	t.Helper()
 	id, err := db.CreateCaller(context.Background(), pool, db.NewCaller{
-		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvRegularTesting,
 		Quota:           quota,
 		CostBudgetTotal: budget,

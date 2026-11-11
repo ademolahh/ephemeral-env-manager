@@ -16,6 +16,7 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
 	"github.com/ademolahh/ephemeral-env-manager/internal/env"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
+	"github.com/ademolahh/ephemeral-env-manager/internal/session"
 )
 
 type fakeProvider struct {
@@ -46,15 +47,17 @@ func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (strin
 func (f *fakeProvider) List(ctx context.Context) ([]string, error) { return nil, nil }
 
 type server struct {
-	tx      pgx.Tx
-	m       *env.Manager
-	fake    *fakeProvider
-	handler http.Handler
+	tx       pgx.Tx
+	m        *env.Manager
+	fake     *fakeProvider
+	sessions *session.Store
+	handler  http.Handler
 }
 
 func newServer(t *testing.T) server {
 	t.Helper()
 	tx := dbtest.Tx(t)
+	sessions := dbtest.Sessions(t)
 	ctx := context.Background()
 	if err := db.SetHourlyPrices(ctx, tx, provider.Docker, provider.Prices{
 		CPUCore: 4048,
@@ -68,14 +71,13 @@ func newServer(t *testing.T) server {
 	}
 	fake := &fakeProvider{}
 	m := env.NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake})
-	return server{tx: tx, m: m, fake: fake, handler: Routes(NewHandler(tx, m, testAdminSecret))}
+	return server{tx: tx, m: m, fake: fake, sessions: sessions, handler: Routes(NewHandler(tx, m, sessions, nil))}
 }
 
 func (s server) apiKey(t *testing.T, permitted db.EnvType, quota provider.Resources) string {
 	t.Helper()
 	ctx := context.Background()
 	callerID, err := db.CreateCaller(ctx, s.tx, db.NewCaller{
-		Role:            db.RoleUser,
 		PermittedEnv:    permitted,
 		Quota:           quota,
 		CostBudgetTotal: 10000,
@@ -85,7 +87,7 @@ func (s server) apiKey(t *testing.T, permitted db.EnvType, quota provider.Resour
 		t.Fatalf("CreateCaller() error = %v", err)
 	}
 	key, hash := auth.GenerateAPIKey()
-	if _, err := db.CreateAPIKey(ctx, s.tx, callerID, hash, time.Now().Add(time.Hour)); err != nil {
+	if _, err := db.CreateAPIKey(ctx, s.tx, db.NewAPIKey{CallerID: callerID, Name: "test", Hash: hash, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatalf("CreateAPIKey() error = %v", err)
 	}
 	return key
@@ -252,7 +254,6 @@ func TestCreateEnvUnauthorized(t *testing.T) {
 
 	revokedKey, hash := auth.GenerateAPIKey()
 	callerID, err := db.CreateCaller(context.Background(), s.tx, db.NewCaller{
-		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvRegularTesting,
 		Quota:           provider.Resources{CPUCore: 10},
 		CostBudgetTotal: 10000,
@@ -261,11 +262,11 @@ func TestCreateEnvUnauthorized(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCaller() error = %v", err)
 	}
-	keyID, err := db.CreateAPIKey(context.Background(), s.tx, callerID, hash, time.Now().Add(time.Hour))
+	created, err := db.CreateAPIKey(context.Background(), s.tx, db.NewAPIKey{CallerID: callerID, Name: "revoked", Hash: hash, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatalf("CreateAPIKey() error = %v", err)
 	}
-	if err := db.RevokeAPIKey(context.Background(), s.tx, keyID); err != nil {
+	if err := db.RevokeAPIKey(context.Background(), s.tx, created.ID, callerID); err != nil {
 		t.Fatalf("RevokeAPIKey() error = %v", err)
 	}
 

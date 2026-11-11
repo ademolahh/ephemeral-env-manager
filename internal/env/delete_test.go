@@ -36,7 +36,6 @@ func createRunning(t *testing.T, m *Manager, q db.DBTX, callerID uuid.UUID) db.E
 func otherCaller(t *testing.T, q db.DBTX, role db.Role) db.AuthenticatedCaller {
 	t.Helper()
 	id, err := db.CreateCaller(context.Background(), q, db.NewCaller{
-		Role:            role,
 		PermittedEnv:    db.EnvProdBug,
 		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
 		CostBudgetTotal: 1000,

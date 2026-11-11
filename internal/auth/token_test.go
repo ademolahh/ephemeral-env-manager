@@ -4,29 +4,24 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/hex"
-	"strings"
 	"testing"
 )
 
 func TestGenerateAPIKey(t *testing.T) {
 	key, hash := GenerateAPIKey()
 
-	body, ok := strings.CutPrefix(key, "eem_")
-	if !ok {
-		t.Fatalf("GenerateAPIKey() key = %q, want eem_ prefix", key)
+	if len(key) != 43 {
+		t.Errorf("len(key) = %d, want 43", len(key))
 	}
-	if len(key) != 47 {
-		t.Errorf("len(key) = %d, want 47", len(key))
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(body)
+	raw, err := base64.RawURLEncoding.DecodeString(key)
 	if err != nil {
-		t.Fatalf("decode key body %q: %v", body, err)
+		t.Fatalf("decode key %q: %v", key, err)
 	}
 	if len(raw) != 32 {
 		t.Errorf("decoded key length = %d, want 32", len(raw))
 	}
-	if !bytes.Equal(hash, HashAPIKey(key)) {
-		t.Errorf("GenerateAPIKey() hash = %x, want HashAPIKey(key) = %x", hash, HashAPIKey(key))
+	if !bytes.Equal(hash, HashToken(key)) {
+		t.Errorf("GenerateAPIKey() hash = %x, want HashToken(key) = %x", hash, HashToken(key))
 	}
 }
 
@@ -47,7 +42,7 @@ func TestGenerateAPIKeyUnique(t *testing.T) {
 	}
 }
 
-func TestHashAPIKey(t *testing.T) {
+func TestHashToken(t *testing.T) {
 	tests := []struct {
 		name string
 		key  string
@@ -67,20 +62,20 @@ func TestHashAPIKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := hex.EncodeToString(HashAPIKey(tt.key)); got != tt.want {
-				t.Errorf("HashAPIKey(%q) = %s, want %s", tt.key, got, tt.want)
+			if got := hex.EncodeToString(HashToken(tt.key)); got != tt.want {
+				t.Errorf("HashToken(%q) = %s, want %s", tt.key, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestHashAPIKeyDistinct(t *testing.T) {
-	a := HashAPIKey("eem_a")
-	b := HashAPIKey("eem_b")
+func TestHashTokenDistinct(t *testing.T) {
+	a := HashToken("eem_a")
+	b := HashToken("eem_b")
 	if bytes.Equal(a, b) {
-		t.Errorf("HashAPIKey() returned same hash %x for different keys", a)
+		t.Errorf("HashToken() returned same hash %x for different keys", a)
 	}
-	if !bytes.Equal(a, HashAPIKey("eem_a")) {
-		t.Error("HashAPIKey() not deterministic")
+	if !bytes.Equal(a, HashToken("eem_a")) {
+		t.Error("HashToken() not deterministic")
 	}
 }

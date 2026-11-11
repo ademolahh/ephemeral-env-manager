@@ -20,7 +20,6 @@ var (
 type NewCaller struct {
 	GithubLogin     *string
 	GithubID        *string
-	Role            Role
 	PermittedEnv    EnvType
 	Quota           provider.Resources
 	CostBudgetTotal int64
@@ -28,7 +27,6 @@ type NewCaller struct {
 }
 
 type CallerLimits struct {
-	Role            Role
 	PermittedEnv    EnvType
 	Quota           provider.Resources
 	CostBudgetTotal int64
@@ -74,13 +72,13 @@ func CreateCaller(ctx context.Context, q DBTX, c NewCaller) (uuid.UUID, error) {
 		INSERT INTO callers (
 			id, github_login, github_id,
 			quota_cpu_cores, quota_ram_gb, quota_disk_gb,
-			cost_budget_total, budget_expires_at, role, permitted_env
+			cost_budget_total, budget_expires_at, permitted_env
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (github_id) DO NOTHING`,
 		id, c.GithubLogin, c.GithubID,
 		c.Quota.CPUCore, c.Quota.RAMGB, c.Quota.DiskGB,
-		c.CostBudgetTotal, c.BudgetExpiresAt, c.Role, c.PermittedEnv,
+		c.CostBudgetTotal, c.BudgetExpiresAt, c.PermittedEnv,
 	)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("create caller: %w", err)
@@ -89,6 +87,60 @@ func CreateCaller(ctx context.Context, q DBTX, c NewCaller) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("create caller: %w", ErrGithubIDTaken)
 	}
 	return id, nil
+}
+
+func UpsertGithubCaller(ctx context.Context, q DBTX, c NewCaller) (uuid.UUID, error) {
+	if c.GithubID == nil {
+		return uuid.Nil, errors.New("upsert github caller: github id is required")
+	}
+
+	var id uuid.UUID
+	err := q.QueryRow(ctx, `
+		INSERT INTO callers (
+			id, github_login, github_id,
+			quota_cpu_cores, quota_ram_gb, quota_disk_gb,
+			cost_budget_total, budget_expires_at, permitted_env
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (github_id) DO UPDATE SET github_login = EXCLUDED.github_login
+		RETURNING id`,
+		uuid.New(), c.GithubLogin, c.GithubID,
+		c.Quota.CPUCore, c.Quota.RAMGB, c.Quota.DiskGB,
+		c.CostBudgetTotal, c.BudgetExpiresAt, c.PermittedEnv,
+	).Scan(&id)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("upsert github caller: %w", err)
+	}
+	return id, nil
+}
+
+func GithubCallerExists(ctx context.Context, q DBTX, githubID string) (bool, error) {
+	var exists bool
+	err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM callers WHERE github_id = $1)`, githubID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("github caller exists: %w", err)
+	}
+	return exists, nil
+}
+
+type Caller struct {
+	ID           uuid.UUID
+	GithubLogin  *string
+	GithubID     *string
+	PermittedEnv EnvType
+}
+
+func GetCaller(ctx context.Context, q DBTX, id uuid.UUID) (Caller, error) {
+	c := Caller{ID: id}
+	err := q.QueryRow(ctx, `SELECT github_login, github_id, permitted_env FROM callers WHERE id = $1`, id).
+		Scan(&c.GithubLogin, &c.GithubID, &c.PermittedEnv)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Caller{}, fmt.Errorf("get caller %s: %w", id, ErrCallerNotFound)
+	}
+	if err != nil {
+		return Caller{}, fmt.Errorf("get caller %s: %w", id, err)
+	}
+	return c, nil
 }
 
 func SetCallerBudget(ctx context.Context, q DBTX, id uuid.UUID, quota provider.Resources, costBudget int64, expiresAt time.Time) error {
@@ -149,13 +201,13 @@ func SetCallerGithub(ctx context.Context, q DBTX, id uuid.UUID, githubLogin, git
 func LockCaller(ctx context.Context, q DBTX, id uuid.UUID) (CallerLimits, error) {
 	var c CallerLimits
 	err := q.QueryRow(ctx, `
-		SELECT role, permitted_env, quota_cpu_cores, quota_ram_gb, quota_disk_gb,
+		SELECT permitted_env, quota_cpu_cores, quota_ram_gb, quota_disk_gb,
 			cost_budget_total, cost_used, prod_bug_cost, prod_bug_cost_cap,
 			budget_set_at, budget_expires_at <= now()
 		FROM callers WHERE id = $1
 		FOR UPDATE`, id,
 	).Scan(
-		&c.Role, &c.PermittedEnv, &c.Quota.CPUCore, &c.Quota.RAMGB, &c.Quota.DiskGB,
+		&c.PermittedEnv, &c.Quota.CPUCore, &c.Quota.RAMGB, &c.Quota.DiskGB,
 		&c.CostBudgetTotal, &c.CostUsed, &c.ProdBugCost, &c.ProdBugCostCap,
 		&c.BudgetSetAt, &c.BudgetExpired,
 	)

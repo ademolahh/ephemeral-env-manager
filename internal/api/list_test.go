@@ -67,7 +67,7 @@ func TestListEnvsOnlyShowsCallerEnvironments(t *testing.T) {
 }
 
 func TestFrontendServedWithoutAPIKey(t *testing.T) {
-	handler := Routes(NewHandler(nil, nil, nil))
+	handler := Routes(NewHandler(nil, nil, nil, nil))
 	for _, path := range []string{"/", "/app.js", "/styles.css"} {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))

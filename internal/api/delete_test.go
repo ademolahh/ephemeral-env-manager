@@ -24,7 +24,6 @@ func (s server) callerWithRole(t *testing.T, role db.Role) (uuid.UUID, string) {
 	t.Helper()
 	ctx := context.Background()
 	callerID, err := db.CreateCaller(ctx, s.tx, db.NewCaller{
-		Role:            role,
 		PermittedEnv:    db.EnvProdBug,
 		Quota:           provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50},
 		CostBudgetTotal: 10000,
@@ -33,11 +32,23 @@ func (s server) callerWithRole(t *testing.T, role db.Role) (uuid.UUID, string) {
 	if err != nil {
 		t.Fatalf("CreateCaller() error = %v", err)
 	}
+	return callerID, s.keyFor(t, callerID, db.NewAPIKey{Role: role})
+}
+
+func (s server) keyFor(t *testing.T, callerID uuid.UUID, k db.NewAPIKey) string {
+	t.Helper()
 	key, hash := auth.GenerateAPIKey()
-	if _, err := db.CreateAPIKey(ctx, s.tx, callerID, hash, time.Now().Add(time.Hour)); err != nil {
+	k.CallerID, k.Hash = callerID, hash
+	if k.Name == "" {
+		k.Name = "test"
+	}
+	if k.ExpiresAt.IsZero() {
+		k.ExpiresAt = time.Now().Add(time.Hour)
+	}
+	if _, err := db.CreateAPIKey(context.Background(), s.tx, k); err != nil {
 		t.Fatalf("CreateAPIKey() error = %v", err)
 	}
-	return callerID, key
+	return key
 }
 
 func (s server) delete(t *testing.T, key, id string) *httptest.ResponseRecorder {

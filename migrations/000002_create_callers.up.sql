@@ -12,6 +12,5 @@ CREATE TABLE callers (
     prod_bug_cost_cap bigint NOT NULL DEFAULT 0 CHECK (prod_bug_cost_cap >= 0),
     budget_expires_at timestamptz NOT NULL,
     budget_set_at     timestamptz NOT NULL DEFAULT now(),
-    role              caller_role NOT NULL,
     permitted_env     env_type NOT NULL DEFAULT 'REGULAR_TESTING'
 );

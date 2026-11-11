@@ -4,9 +4,10 @@ DATABASE_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:5432/
 MIGRATIONS_DIR := migrations
 TEST_DB := $(POSTGRES_DB)_test
 TEST_DATABASE_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:5432/$(TEST_DB)?sslmode=disable
+TEST_REDIS_URL ?= redis://localhost:6379/1
 TEST_DOCKER ?= 1
 
-export TEST_DATABASE_URL TEST_DOCKER
+export TEST_DATABASE_URL TEST_REDIS_URL TEST_DOCKER
 
 .PHONY: migrate-up migrate-down migrate-new api-key admin seed-docker test test-db
 
@@ -33,6 +34,6 @@ test: test-db
 	go test -race -count=1 ./...
 
 test-db:
-	@docker compose up -d --wait postgres
+	@docker compose up -d --wait postgres redis
 	@docker compose exec -T postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -tAc "SELECT 1 FROM pg_database WHERE datname = '$(TEST_DB)'" | grep -q 1 || \
 		docker compose exec -T postgres createdb -U $(POSTGRES_USER) $(TEST_DB)

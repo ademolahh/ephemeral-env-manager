@@ -152,7 +152,6 @@ func createEnvironment(t *testing.T, tx pgx.Tx, backend string, status db.EnvSta
 	ctx := context.Background()
 
 	callerID, err := db.CreateCaller(ctx, tx, db.NewCaller{
-		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvPRReview,
 		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
 		CostBudgetTotal: 10000,

@@ -110,11 +110,7 @@ func (h *Handler) MCP() http.Handler {
 }
 
 func (h *Handler) verifyMCPToken(ctx context.Context, token string, _ *http.Request) (*mcpauth.TokenInfo, error) {
-	if auth.IsAdminToken(token) {
-		return nil, fmt.Errorf("admin tokens are not accepted: %w", mcpauth.ErrInvalidToken)
-	}
-
-	caller, err := db.CallerByAPIKey(ctx, h.db, auth.HashAPIKey(token))
+	caller, err := db.CallerByAPIKey(ctx, h.db, auth.HashToken(token))
 	if errors.Is(err, db.ErrAPIKeyNotFound) {
 		return nil, fmt.Errorf("invalid api key: %w", mcpauth.ErrInvalidToken)
 	}
@@ -158,7 +154,7 @@ func (h *Handler) mcpCreateEnv(ctx context.Context, req *mcp.CallToolRequest, in
 		return nil, nil, err
 	}
 
-	cr, err := h.createRequest(ctx, caller.ID, createEnvRequest{
+	cr, err := h.createRequest(ctx, caller, createEnvRequest{
 		Type:      in.Type,
 		Provider:  in.Provider,
 		Workload:  in.Workload,
@@ -218,7 +214,7 @@ func (h *Handler) mcpListEnvs(ctx context.Context, req *mcp.CallToolRequest, in 
 		return nil, nil, fmt.Errorf("limit must be between 1 and %d", maxListLimit)
 	}
 
-	resp, err := h.listEnvs(ctx, caller.ID, status, page, limit)
+	resp, err := h.listEnvs(ctx, caller, status, page, limit)
 	if err != nil {
 		return nil, nil, toolError("list environments", err)
 	}

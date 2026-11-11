@@ -16,6 +16,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/ademolahh/ephemeral-env-manager/internal/session"
 )
 
 var dotEnvErr error
@@ -184,4 +186,33 @@ func loadDotEnv(path string) error {
 		return fmt.Errorf("load %s: %w", path, err)
 	}
 	return nil
+}
+
+func Sessions(t *testing.T) *session.Store {
+	t.Helper()
+	checkDotEnv(t)
+	url := os.Getenv("TEST_REDIS_URL")
+	if url == "" {
+		t.Skip("TEST_REDIS_URL not set")
+	}
+
+	ctx := context.Background()
+	rdb, err := session.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("redis: %v", err)
+	}
+
+	prefix := "eem_test:" + uuid.NewString() + ":"
+	t.Cleanup(func() {
+		defer rdb.Close()
+		keys, err := rdb.Keys(context.Background(), prefix+"*").Result()
+		if err != nil {
+			t.Errorf("list test keys: %v", err)
+			return
+		}
+		if len(keys) > 0 {
+			rdb.Del(context.Background(), keys...)
+		}
+	})
+	return session.New(rdb, prefix)
 }

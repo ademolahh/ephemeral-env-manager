@@ -272,7 +272,7 @@ func decodeCaller(t *testing.T, rec *httptest.ResponseRecorder) callerResponse {
 func TestCreateCaller(t *testing.T) {
 	s := newServer(t)
 
-	rec := s.postCaller(t, "", `{"github_login": "octocat", "github_id": "583231"}`)
+	rec := s.postCaller(t, s.adminToken(t), `{"github_login": "octocat", "github_id": "583231"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d; body %s", rec.Code, http.StatusCreated, rec.Body)
 	}
@@ -291,59 +291,47 @@ func TestCreateCaller(t *testing.T) {
 	if login == nil || *login != "octocat" || githubID == nil || *githubID != "583231" {
 		t.Errorf("stored github = %v, %v, want octocat, 583231", login, githubID)
 	}
-
-	if rec := s.getBudget(t, s.adminToken(t), got.ID.String()); rec.Code != http.StatusOK {
-		t.Errorf("admin get new caller budget = %d, want 200; body %s", rec.Code, rec.Body)
-	}
 }
 
 func TestCreateCallerMinimalPrivilege(t *testing.T) {
 	s := newServer(t)
 	before := time.Now()
 
-	for name, key := range map[string]string{"no api key": "", "admin": s.adminToken(t)} {
-		t.Run(name, func(t *testing.T) {
-			rec := s.postCaller(t, key, `{}`)
-			if rec.Code != http.StatusCreated {
-				t.Fatalf("status = %d, want %d; body %s", rec.Code, http.StatusCreated, rec.Body)
-			}
-			got := decodeCaller(t, rec)
-			if got.Role != db.RoleUser || got.PermittedEnv != db.EnvRegularTesting {
-				t.Errorf("returned role, permitted_env = %s, %s, want user, REGULAR_TESTING", got.Role, got.PermittedEnv)
-			}
-			if got.GithubLogin != nil || got.GithubID != nil {
-				t.Errorf("github = %v, %v, want null", got.GithubLogin, got.GithubID)
-			}
+	rec := s.postCaller(t, s.adminToken(t), `{}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body %s", rec.Code, http.StatusCreated, rec.Body)
+	}
+	got := decodeCaller(t, rec)
+	if got.PermittedEnv != db.EnvRegularTesting {
+		t.Errorf("returned permitted_env = %s, want REGULAR_TESTING", got.PermittedEnv)
+	}
+	if got.GithubLogin != nil || got.GithubID != nil {
+		t.Errorf("github = %v, %v, want null", got.GithubLogin, got.GithubID)
+	}
 
-			var role db.Role
-			if err := s.tx.QueryRow(context.Background(), `SELECT role FROM callers WHERE id = $1`, got.ID).Scan(&role); err != nil {
-				t.Fatalf("read role: %v", err)
-			}
-			limits, err := db.LockCaller(context.Background(), s.tx, got.ID)
-			if err != nil {
-				t.Fatalf("LockCaller() error = %v", err)
-			}
-			if role != db.RoleUser || limits.PermittedEnv != db.EnvRegularTesting {
-				t.Errorf("stored role, permitted_env = %s, %s, want user, REGULAR_TESTING", role, limits.PermittedEnv)
-			}
-			if limits.Quota != defaultQuota || limits.CostBudgetTotal != defaultCostBudget {
-				t.Errorf("stored quota, budget = %+v, %d, want %+v, %d", limits.Quota, limits.CostBudgetTotal, defaultQuota, defaultCostBudget)
-			}
-			wantExpiry := before.Add(defaultBudgetPeriod)
-			if got.BudgetExpiresAt.Before(wantExpiry.Add(-time.Minute)) || got.BudgetExpiresAt.After(wantExpiry.Add(time.Minute)) {
-				t.Errorf("budget_expires_at = %v, want about %v", got.BudgetExpiresAt, wantExpiry)
-			}
-		})
+	limits, err := db.LockCaller(context.Background(), s.tx, got.ID)
+	if err != nil {
+		t.Fatalf("LockCaller() error = %v", err)
+	}
+	if limits.PermittedEnv != db.EnvRegularTesting {
+		t.Errorf("stored permitted_env = %s, want REGULAR_TESTING", limits.PermittedEnv)
+	}
+	if limits.Quota != defaultQuota || limits.CostBudgetTotal != defaultCostBudget {
+		t.Errorf("stored quota, budget = %+v, %d, want %+v, %d", limits.Quota, limits.CostBudgetTotal, defaultQuota, defaultCostBudget)
+	}
+	wantExpiry := before.Add(defaultBudgetPeriod)
+	if got.BudgetExpiresAt.Before(wantExpiry.Add(-time.Minute)) || got.BudgetExpiresAt.After(wantExpiry.Add(time.Minute)) {
+		t.Errorf("budget_expires_at = %v, want about %v", got.BudgetExpiresAt, wantExpiry)
 	}
 }
 
 func TestCreateCallerHasNoAPIKey(t *testing.T) {
 	s := newServer(t)
-	rec := s.postCaller(t, "", `{}`)
+	rec := s.postCaller(t, s.adminToken(t), `{}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d; body %s", rec.Code, http.StatusCreated, rec.Body)
 	}
-	if strings.Contains(rec.Body.String(), "eem_") {
+	if strings.Contains(rec.Body.String(), `"key"`) {
 		t.Errorf("response %s contains an api key", rec.Body)
 	}
 
@@ -358,7 +346,8 @@ func TestCreateCallerHasNoAPIKey(t *testing.T) {
 
 func TestCreateCallerRejected(t *testing.T) {
 	s := newServer(t)
-	if rec := s.postCaller(t, "", `{"github_id": "583231"}`); rec.Code != http.StatusCreated {
+	admin := s.adminToken(t)
+	if rec := s.postCaller(t, admin, `{"github_id": "583231"}`); rec.Code != http.StatusCreated {
 		t.Fatalf("seed caller status = %d, want 201; body %s", rec.Code, rec.Body)
 	}
 	before := s.countCallers(t)
@@ -377,7 +366,7 @@ func TestCreateCallerRejected(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rec := s.postCaller(t, "", tt.body)
+			rec := s.postCaller(t, admin, tt.body)
 			if rec.Code != tt.code || !strings.Contains(rec.Body.String(), tt.want) {
 				t.Errorf("got %d %s, want %d containing %q", rec.Code, rec.Body, tt.code, tt.want)
 			}
@@ -389,17 +378,22 @@ func TestCreateCallerRejected(t *testing.T) {
 	}
 }
 
-func TestCreateCallerOnlyExactPathIsPublic(t *testing.T) {
+func TestCreateCallerRequiresAdmin(t *testing.T) {
 	s := newServer(t)
-	for _, tc := range []struct{ method, path string }{
-		{http.MethodGet, "/callers"},
-		{http.MethodPost, "/callers/"},
-		{http.MethodGet, "/callers/me/budget"},
+	before := s.countCallers(t)
+	for name, tc := range map[string]struct {
+		key  string
+		want int
+	}{
+		"no credentials": {"", http.StatusUnauthorized},
+		"user key":       {s.keyWithRole(t, db.RoleUser), http.StatusForbidden},
+		"agent key":      {s.keyWithRole(t, db.RoleAgent), http.StatusForbidden},
 	} {
-		rec := httptest.NewRecorder()
-		s.handler.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`)))
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("%s %s without key = %d, want 401", tc.method, tc.path, rec.Code)
+		if rec := s.postCaller(t, tc.key, `{"github_id": "1"}`); rec.Code != tc.want {
+			t.Errorf("%s: POST /callers = %d, want %d", name, rec.Code, tc.want)
 		}
+	}
+	if got := s.countCallers(t); got != before+2 {
+		t.Errorf("callers = %d, want %d (only the two key owners)", got, before+2)
 	}
 }

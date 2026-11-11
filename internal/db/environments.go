@@ -31,6 +31,7 @@ type Environment struct {
 	Resources       provider.Resources `json:"resources"`
 	HourlyRate      int64              `json:"hourly_rate"`
 	CallerID        uuid.UUID          `json:"-"`
+	APIKeyID        *uuid.UUID         `json:"api_key_id,omitempty"`
 	FailureReason   *string            `json:"failure_reason,omitempty"`
 	TemplateName    string             `json:"template_name"`
 	TemplateVersion string             `json:"template_version"`
@@ -39,6 +40,7 @@ type Environment struct {
 
 type NewEnvironment struct {
 	CallerID        uuid.UUID
+	APIKeyID        *uuid.UUID
 	Type            EnvType
 	Provider        provider.Type
 	Resources       provider.Resources
@@ -53,14 +55,14 @@ type NewEnvironment struct {
 const environmentColumns = `
 	id, created_at, expires_at, type, status, deleted_at, provider, endpoint,
 	cpu_cores, ram_gb, disk_gb, hourly_rate, caller_id, failure_reason,
-	template_name, template_version, backend`
+	template_name, template_version, backend, api_key_id`
 
 func scanEnvironment(row pgx.Row) (Environment, error) {
 	var e Environment
 	err := row.Scan(
 		&e.ID, &e.CreatedAt, &e.ExpiresAt, &e.Type, &e.Status, &e.DeletedAt, &e.Provider, &e.Endpoint,
 		&e.Resources.CPUCore, &e.Resources.RAMGB, &e.Resources.DiskGB, &e.HourlyRate, &e.CallerID, &e.FailureReason,
-		&e.TemplateName, &e.TemplateVersion, &e.Backend,
+		&e.TemplateName, &e.TemplateVersion, &e.Backend, &e.APIKeyID,
 	)
 	return e, err
 }
@@ -78,13 +80,13 @@ func CreateEnvironment(ctx context.Context, q DBTX, e NewEnvironment) (uuid.UUID
 			id, expires_at, type, provider,
 			cpu_cores, ram_gb, disk_gb, hourly_rate,
 			caller_id, template_name, template_version, idempotency_key,
-			estimated_cost, reserved_cost
+			estimated_cost, reserved_cost, api_key_id
 		)
 		VALUES ($1, now() + make_interval(secs => $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-			$13::bigint, CASE WHEN $3::env_type = 'PROD_BUG' THEN 0 ELSE $13::bigint END)`,
+			$13::bigint, CASE WHEN $3::env_type = 'PROD_BUG' THEN 0 ELSE $13::bigint END, $14)`,
 		id, e.TTL.Seconds(), e.Type, e.Provider,
 		e.Resources.CPUCore, e.Resources.RAMGB, e.Resources.DiskGB, e.HourlyRate,
-		e.CallerID, e.TemplateName, e.TemplateVersion, e.IdempotencyKey, e.EstimatedCost,
+		e.CallerID, e.TemplateName, e.TemplateVersion, e.IdempotencyKey, e.EstimatedCost, e.APIKeyID,
 	)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("create environment: %w", err)
@@ -312,21 +314,26 @@ func ListDeletingEnvironments(ctx context.Context, q DBTX) ([]Environment, error
 }
 
 type EnvironmentFilter struct {
-	Status EnvStatus
-	Limit  int
-	Offset int
+	APIKeyID *uuid.UUID
+	Status   EnvStatus
+	Limit    int
+	Offset   int
 }
 
 func ListCallerEnvironments(ctx context.Context, q DBTX, callerID uuid.UUID, f EnvironmentFilter) ([]Environment, error) {
 	return listEnvironments(ctx, q, `
 		WHERE caller_id = $1 AND ($2 = '' OR status::text = $2)
+			AND ($5::uuid IS NULL OR api_key_id = $5)
 		ORDER BY created_at DESC, id DESC
 		LIMIT $3 OFFSET $4`,
-		callerID, string(f.Status), f.Limit, f.Offset)
+		callerID, string(f.Status), f.Limit, f.Offset, f.APIKeyID)
 }
 
-func CountCallerEnvironments(ctx context.Context, q DBTX, callerID uuid.UUID) (map[EnvStatus]int, error) {
-	rows, err := q.Query(ctx, `SELECT status, count(*) FROM environments WHERE caller_id = $1 GROUP BY status`, callerID)
+func CountCallerEnvironments(ctx context.Context, q DBTX, callerID uuid.UUID, apiKeyID *uuid.UUID) (map[EnvStatus]int, error) {
+	rows, err := q.Query(ctx, `
+		SELECT status, count(*) FROM environments
+		WHERE caller_id = $1 AND ($2::uuid IS NULL OR api_key_id = $2)
+		GROUP BY status`, callerID, apiKeyID)
 	if err != nil {
 		return nil, fmt.Errorf("count environments: %w", err)
 	}

@@ -49,19 +49,23 @@ func errorStatus(err error) int {
 		errors.Is(err, env.ErrQuotaExceeded),
 		errors.Is(err, env.ErrBudgetExceeded),
 		errors.Is(err, env.ErrBudgetExpired),
-		errors.Is(err, env.ErrProdBugCapExceeded):
+		errors.Is(err, env.ErrProdBugCapExceeded),
+		errors.Is(err, env.ErrKeyCostCapExceeded),
+		errors.Is(err, db.ErrAPIKeyInactive):
 		return http.StatusForbidden
 
 	case errors.Is(err, db.ErrEnvNotFound),
 		errors.Is(err, db.ErrCallerNotFound),
-		errors.Is(err, db.ErrTemplateNotFound):
+		errors.Is(err, db.ErrTemplateNotFound),
+		errors.Is(err, db.ErrAPIKeyNotFound):
 		return http.StatusNotFound
 
 	case errors.Is(err, db.ErrInvalidTransition),
 		errors.Is(err, env.ErrNotRunning),
 		errors.Is(err, db.ErrCapacityBelowUsage),
 		errors.Is(err, db.ErrGithubIDTaken),
-		errors.Is(err, db.ErrTemplateExists):
+		errors.Is(err, db.ErrTemplateExists),
+		errors.Is(err, env.ErrIdempotencyKeyInUse):
 		return http.StatusConflict
 
 	case errors.Is(err, env.ErrCapacityExceeded),

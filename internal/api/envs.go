@@ -49,7 +49,7 @@ func (h *Handler) CreateEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cr, err := h.createRequest(r.Context(), callerFrom(r.Context()).ID, req, r.Header.Get("Idempotency-Key"))
+	cr, err := h.createRequest(r.Context(), callerFrom(r.Context()), req, r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		writeServiceError(w, "create environment", err)
 		return
@@ -65,7 +65,7 @@ func (h *Handler) CreateEnv(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, e)
 }
 
-func (h *Handler) createRequest(ctx context.Context, callerID uuid.UUID, req createEnvRequest, key string) (env.CreateRequest, error) {
+func (h *Handler) createRequest(ctx context.Context, caller db.AuthenticatedCaller, req createEnvRequest, key string) (env.CreateRequest, error) {
 	if len(key) > maxIdempotencyKeyLen {
 		return env.CreateRequest{}, badRequest("Idempotency-Key longer than %d characters", maxIdempotencyKeyLen)
 	}
@@ -89,7 +89,8 @@ func (h *Handler) createRequest(ctx context.Context, callerID uuid.UUID, req cre
 	}
 
 	return env.CreateRequest{
-		CallerID:       callerID,
+		CallerID:       caller.ID,
+		APIKeyID:       caller.KeyID,
 		Type:           req.Type,
 		Provider:       req.Provider,
 		Workload:       req.Workload,
@@ -128,7 +129,7 @@ func (h *Handler) ListEnvs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.listEnvs(r.Context(), callerFrom(r.Context()).ID, status, page, limit)
+	resp, err := h.listEnvs(r.Context(), callerFrom(r.Context()), status, page, limit)
 	if err != nil {
 		writeServiceError(w, "list environments", err)
 		return
@@ -137,17 +138,18 @@ func (h *Handler) ListEnvs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) listEnvs(ctx context.Context, callerID uuid.UUID, status db.EnvStatus, page, limit int) (listEnvsResponse, error) {
-	envs, err := db.ListCallerEnvironments(ctx, h.db, callerID, db.EnvironmentFilter{
-		Status: status,
-		Limit:  limit + 1,
-		Offset: (page - 1) * limit,
+func (h *Handler) listEnvs(ctx context.Context, caller db.AuthenticatedCaller, status db.EnvStatus, page, limit int) (listEnvsResponse, error) {
+	envs, err := db.ListCallerEnvironments(ctx, h.db, caller.ID, db.EnvironmentFilter{
+		APIKeyID: caller.AgentKey(),
+		Status:   status,
+		Limit:    limit + 1,
+		Offset:   (page - 1) * limit,
 	})
 	if err != nil {
 		return listEnvsResponse{}, err
 	}
 
-	counts, err := db.CountCallerEnvironments(ctx, h.db, callerID)
+	counts, err := db.CountCallerEnvironments(ctx, h.db, caller.ID, caller.AgentKey())
 	if err != nil {
 		return listEnvsResponse{}, err
 	}

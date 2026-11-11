@@ -51,13 +51,3 @@ func TestAdminByUsernameNotFound(t *testing.T) {
 		t.Errorf("AdminByUsername() error = %v, want %v", err, ErrAdminNotFound)
 	}
 }
-
-func TestCallerRoleRejectsAdmin(t *testing.T) {
-	tx := testTx(t)
-	c := newCaller()
-	c.Role = "admin"
-	_, err := CreateCaller(context.Background(), tx, c)
-	if got := pgCode(err); got != "22P02" {
-		t.Errorf("CreateCaller() with admin role error = %v, want invalid enum value", err)
-	}
-}

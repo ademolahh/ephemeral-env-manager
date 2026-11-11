@@ -24,6 +24,8 @@ var (
 	ErrInvalidEnvType      = errors.New("invalid environment type")
 	ErrNotPermitted        = errors.New("environment type not permitted for caller")
 	ErrProdBugCapExceeded  = errors.New("PROD_BUG cost cap exceeded")
+	ErrKeyCostCapExceeded  = errors.New("api key cost cap exceeded")
+	ErrIdempotencyKeyInUse = errors.New("idempotency key already used by another api key")
 	ErrQuotaExceeded       = errors.New("quota exceeded")
 	ErrBudgetExpired       = errors.New("cost budget expired")
 	ErrBudgetExceeded      = errors.New("cost budget exceeded")
@@ -36,8 +38,6 @@ const (
 	execTimeout   = 5 * time.Minute
 	readyInterval = 2 * time.Second
 )
-
-var envTypes = []db.EnvType{db.EnvRegularTesting, db.EnvPRReview, db.EnvProdBug}
 
 type Manager struct {
 	db          db.DBTX
@@ -66,6 +66,7 @@ func NewManager(q db.DBTX, providers map[provider.Type]provider.Provider, opts .
 
 type CreateRequest struct {
 	CallerID       uuid.UUID
+	APIKeyID       uuid.UUID
 	Type           db.EnvType
 	Provider       provider.Type
 	Workload       string
@@ -218,6 +219,10 @@ func (m *Manager) owned(ctx context.Context, caller db.AuthenticatedCaller, id u
 	}
 
 	if e.CallerID != caller.ID {
+		return db.Environment{}, fmt.Errorf("environment %s: %w", id, db.ErrEnvNotFound)
+	}
+
+	if key := caller.AgentKey(); key != nil && (e.APIKeyID == nil || *e.APIKeyID != *key) {
 		return db.Environment{}, fmt.Errorf("environment %s: %w", id, db.ErrEnvNotFound)
 	}
 
@@ -486,11 +491,30 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, px *proxy.Proxy, 
 		return reservation{}, err
 	}
 
+	role, permitted := db.RoleUser, caller.PermittedEnv
+	var limits db.KeyLimits
+	var apiKeyID *uuid.UUID
+	if req.APIKeyID != uuid.Nil {
+		limits, err = db.LockAPIKey(ctx, tx, req.CallerID, req.APIKeyID)
+		if err != nil {
+			return reservation{}, err
+		}
+
+		apiKeyID = &req.APIKeyID
+		role = limits.Role
+		if limits.PermittedEnv != nil && priority(*limits.PermittedEnv) < priority(permitted) {
+			permitted = *limits.PermittedEnv
+		}
+	}
+
 	var key *string
 	if req.IdempotencyKey != "" {
 		key = &req.IdempotencyKey
 		existing, err := db.EnvironmentByIdempotencyKey(ctx, tx, req.CallerID, req.IdempotencyKey)
 		if err == nil {
+			if role == db.RoleAgent && (existing.APIKeyID == nil || *existing.APIKeyID != req.APIKeyID) {
+				return reservation{}, ErrIdempotencyKeyInUse
+			}
 			return reservation{env: existing}, nil
 		}
 
@@ -499,7 +523,7 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, px *proxy.Proxy, 
 		}
 	}
 
-	if err := authorize(caller, req.Type); err != nil {
+	if err := authorize(role, permitted, req.Type); err != nil {
 		return reservation{}, err
 	}
 
@@ -520,7 +544,11 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, px *proxy.Proxy, 
 
 	rate := req.Template.HourlyCost(prices)
 	cost := estimatedCost(rate, req.Template.TTL)
-	if req.Type == db.EnvProdBug && caller.Role == db.RoleAgent {
+	if limits.CostCap != nil && limits.CostSpent+cost > *limits.CostCap {
+		return reservation{}, fmt.Errorf("key spent %d, estimated %d, cap %d: %w", limits.CostSpent, cost, *limits.CostCap, ErrKeyCostCapExceeded)
+	}
+
+	if req.Type == db.EnvProdBug && role == db.RoleAgent {
 		if caller.ProdBugCost+cost > caller.ProdBugCostCap {
 			return reservation{}, fmt.Errorf("used %d, estimated %d, cap %d: %w", caller.ProdBugCost, cost, caller.ProdBugCostCap, ErrProdBugCapExceeded)
 		}
@@ -541,6 +569,7 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, px *proxy.Proxy, 
 
 	id, err := db.CreateEnvironment(ctx, tx, db.NewEnvironment{
 		CallerID:        req.CallerID,
+		APIKeyID:        apiKeyID,
 		Type:            req.Type,
 		Provider:        pt,
 		Resources:       need,
@@ -573,12 +602,12 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, px *proxy.Proxy, 
 	return reservation{env: e, created: true, preempted: preempted}, nil
 }
 
-func authorize(caller db.CallerLimits, t db.EnvType) error {
-	if priority(t) > priority(caller.PermittedEnv) {
-		return fmt.Errorf("%s with permission %s: %w", t, caller.PermittedEnv, ErrNotPermitted)
+func authorize(role db.Role, permitted db.EnvType, t db.EnvType) error {
+	if priority(t) > priority(permitted) {
+		return fmt.Errorf("%s with permission %s: %w", t, permitted, ErrNotPermitted)
 	}
 
-	if caller.Role == db.RoleAgent && t != db.EnvPRReview && t != db.EnvProdBug {
+	if role == db.RoleAgent && t != db.EnvPRReview && t != db.EnvProdBug {
 		return fmt.Errorf("agents create PR_REVIEW or PROD_BUG, not %s: %w", t, ErrNotPermitted)
 	}
 
@@ -676,12 +705,12 @@ func atLeastZero(r provider.Resources) provider.Resources {
 }
 
 func priority(t db.EnvType) int {
-	return slices.Index(envTypes, t) + 1
+	return t.Rank()
 }
 
 func lowerPriority(t db.EnvType) []db.EnvType {
 	var lower []db.EnvType
-	for _, et := range envTypes {
+	for _, et := range db.EnvTypes {
 		if priority(et) < priority(t) {
 			lower = append(lower, et)
 		}

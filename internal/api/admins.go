@@ -9,7 +9,7 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 )
 
-const adminTokenTTL = 12 * time.Hour
+const adminSessionTTL = 12 * time.Hour
 
 type adminLoginRequest struct {
 	Username string `json:"username"`
@@ -43,7 +43,7 @@ func (h *Handler) AdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, expiresAt, err := auth.IssueAdminToken(h.adminSecret, admin.ID, adminTokenTTL)
+	token, expiresAt, err := h.sessions.CreateAdmin(r.Context(), admin.ID, adminSessionTTL)
 	if err != nil {
 		writeServiceError(w, "admin login", err)
 		return

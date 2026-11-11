@@ -1,5 +1,7 @@
 package db
 
+import "slices"
+
 type Role string
 
 const (
@@ -24,3 +26,9 @@ const (
 	EnvDeleted      EnvStatus = "DELETED"
 	EnvFailed       EnvStatus = "FAILED"
 )
+
+var EnvTypes = []EnvType{EnvRegularTesting, EnvPRReview, EnvProdBug}
+
+func (t EnvType) Rank() int {
+	return slices.Index(EnvTypes, t) + 1
+}

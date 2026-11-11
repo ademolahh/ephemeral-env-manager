@@ -132,7 +132,6 @@ func setup(t *testing.T) (pgx.Tx, uuid.UUID) {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
 	callerID, err := db.CreateCaller(ctx, tx, db.NewCaller{
-		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvRegularTesting,
 		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
 		CostBudgetTotal: 1000,
@@ -440,7 +439,6 @@ func TestCreateIdempotencyKeyPerCaller(t *testing.T) {
 	tx, alice := setup(t)
 	ctx := context.Background()
 	bob, err := db.CreateCaller(ctx, tx, db.NewCaller{
-		Role:            db.RoleUser,
 		PermittedEnv:    db.EnvRegularTesting,
 		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
 		CostBudgetTotal: 1000,
