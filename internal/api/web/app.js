@@ -2,8 +2,16 @@ const keyStorage = "eem_api_key";
 const adminTokenStorage = "eem_admin_token";
 const adminNameStorage = "eem_admin_name";
 const roleStorage = "eem_signed_in_as";
-const adminForms = ["admin-budget-form", "admin-capacity-form", "admin-prices-form"];
-const adminMessages = ["admin-budget-message", "admin-capacity-message", "admin-prices-message"];
+const adminForms = ["admin-key-form", "admin-budget-form", "admin-capacity-form", "admin-prices-form"];
+const adminMessages = ["admin-key-message", "admin-budget-message", "admin-capacity-message", "admin-prices-message"];
+const loginErrors = {
+  expired: "The GitHub sign-in took too long. Try again.",
+  state: "The GitHub sign-in could not be verified. Try again.",
+  denied: "GitHub sign-in was cancelled.",
+  github: "GitHub could not be reached. Try again.",
+  not_allowed: "This GitHub account is not allowed to sign in. Ask an admin for access.",
+  internal: "Sign-in failed. Try again.",
+};
 const pageSize = 12;
 const $ = (id) => document.getElementById(id);
 let apiKey = sessionStorage.getItem(keyStorage) || "";
@@ -13,16 +21,24 @@ let signedInAs = sessionStorage.getItem(roleStorage) || (adminToken && !apiKey ?
 let loginMode = location.hash === "#admin" ? "admin" : "caller";
 let pendingDelete = null;
 let currentPage = 1;
+let githubEnabled = false;
 
 const isAdmin = () => signedInAs === "admin" && Boolean(adminToken);
-const isCaller = () => signedInAs === "caller" && Boolean(apiKey);
-const currentToken = () => isAdmin() ? adminToken : apiKey;
+const isGitHubSession = () => signedInAs === "github";
+const isCaller = () => (signedInAs === "caller" && Boolean(apiKey)) || isGitHubSession();
+const currentToken = () => isAdmin() ? adminToken : signedInAs === "caller" ? apiKey : "";
 
-async function requestJSON(path, method = "GET") {
+function authHeaders(extra = {}) {
+  const token = currentToken();
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+}
+
+async function requestJSON(path, method = "GET", body) {
   const response = await fetch(path, {
     method,
     cache: "no-store",
-    headers: { Authorization: `Bearer ${currentToken()}` },
+    headers: authHeaders(body === undefined ? {} : { "Content-Type": "application/json" }),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
@@ -33,7 +49,7 @@ async function requestJSON(path, method = "GET") {
     error.status = response.status;
     throw error;
   }
-  return response.json();
+  return response.status === 204 ? null : response.json();
 }
 
 const listEnvironments = (page = 1) => {
@@ -64,7 +80,11 @@ async function postJSON(path, details) {
   return response.json();
 }
 
-const createCaller = (details) => postJSON("/callers", details);
+const createCaller = (details) => requestJSON("/callers", "POST", details);
+const listKeys = () => requestJSON("/keys");
+const createKey = (details) => requestJSON("/keys", "POST", details);
+const revokeKey = (id) => requestJSON(`/keys/${encodeURIComponent(id)}`, "DELETE");
+const logout = () => requestJSON("/auth/logout", "POST").catch(() => {});
 const loginAdmin = (username, password) => postJSON("/admin/login", { username, password });
 
 async function updateAdmin(path, details) {
@@ -140,6 +160,10 @@ function showLogin(message = "") {
   $("budget-fill").parentElement.setAttribute("aria-valuenow", "0");
   $("capacity-pools").replaceChildren();
   $("capacity-error").hidden = true;
+  $("keys-list").replaceChildren();
+  $("key-create-form").reset();
+  $("key-create-error").hidden = true;
+  $("key-created").hidden = true;
   showPage();
 }
 
@@ -173,12 +197,17 @@ function showPage() {
   $("admin-account").hidden = !isAdmin();
   $("admin-name").textContent = adminName || "—";
   $("key-form").hidden = loginMode === "admin";
+  $("github-login-button").hidden = loginMode === "admin" || !githubEnabled;
+  $("login-divider").hidden = loginMode === "admin" || !githubEnabled;
+  $("keys-panel").hidden = !isGitHubSession();
   $("admin-login-form").hidden = loginMode !== "admin";
   $("login-error").hidden = loginMode === "admin" || !$("login-error").textContent;
   $("admin-login-error").hidden = loginMode !== "admin" || !$("admin-login-error").textContent;
   $("login-description").textContent = loginMode === "admin"
     ? "Use your admin username and password to access all environments."
-    : "Use your EEM API key to access your environments.";
+    : githubEnabled
+      ? "Sign in with GitHub, or use an EEM API key to access your environments."
+      : "Use your EEM API key to access your environments.";
   for (const [id, selected] of [["caller-login-choice", loginMode !== "admin"], ["admin-login-choice", loginMode === "admin"]]) {
     $(id).classList.toggle("active", selected);
     $(id).setAttribute("aria-pressed", String(selected));
@@ -339,7 +368,7 @@ async function loadBudget() {
     if (error.status === 401) {
       sessionStorage.removeItem(keyStorage);
       apiKey = "";
-      showLogin("Your API key is invalid or expired.");
+      showLogin(isGitHubSession() ? "Your session has expired. Sign in again." : "Your API key is invalid or expired.");
       return;
     }
     $("budget-error").textContent = `Could not load budget: ${error.message}`;
@@ -493,12 +522,12 @@ async function loadEnvironments(requestedPage = 1) {
       page = await listEnvironments(Math.ceil(filteredTotal / page.limit));
     }
     renderEnvironments(page);
-    if (isCaller()) await Promise.all([loadBudget(), loadCapacity()]);
+    if (isCaller()) await Promise.all([loadBudget(), loadCapacity(), loadKeys()]);
     else await loadCapacity();
   } catch (error) {
     if (error.status === 401) {
       if (isAdmin()) adminSignOut("Your admin session has expired. Sign in again.");
-      else showLogin("Your API key is invalid or expired.");
+      else showLogin(isGitHubSession() ? "Your session has expired. Sign in again." : "Your API key is invalid or expired.");
       return;
     }
     $("environment-grid").hidden = true;
@@ -533,7 +562,7 @@ $("key-form").addEventListener("submit", async (event) => {
     location.hash = "#environments";
     showPage();
     renderEnvironments(page);
-    await Promise.all([loadBudget(), loadCapacity()]);
+    await Promise.all([loadBudget(), loadCapacity(), loadKeys()]);
   } catch (error) {
     showLogin(
       error.status === 401
@@ -569,6 +598,132 @@ $("caller-form").addEventListener("submit", async (event) => {
   } finally {
     button.disabled = false;
     button.textContent = "Create caller";
+  }
+});
+
+function keyStatus(key) {
+  if (key.revoked_at) return `Revoked ${readableDate(key.revoked_at)}`;
+  if (new Date(key.expires_at) <= new Date()) return `Expired ${readableDate(key.expires_at)}`;
+  return `Expires ${readableDate(key.expires_at)}`;
+}
+
+function renderKeys(keys) {
+  const list = $("keys-list");
+  list.replaceChildren();
+  for (const key of keys) {
+    const row = document.createElement("div");
+    const inactive = Boolean(key.revoked_at) || new Date(key.expires_at) <= new Date();
+    row.className = inactive ? "key-row revoked" : "key-row";
+    const name = document.createElement("strong");
+    name.textContent = key.name;
+    const role = document.createElement("span");
+    role.textContent = key.role === "agent" ? "Agent" : "User";
+    const limits = document.createElement("span");
+    limits.className = "key-meta";
+    limits.textContent = [
+      key.permitted_env ? `up to ${key.permitted_env}` : "same permission as you",
+      key.cost_cap === null ? "no spend cap" : `spent ${formatUSD(key.cost_spent)} of ${formatUSD(key.cost_cap)}`,
+      key.last_used_at ? `last used ${readableDate(key.last_used_at)}` : "never used",
+      keyStatus(key),
+    ].join(" · ");
+    row.append(name, role, limits);
+    if (!key.revoked_at) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "delete-button";
+      button.textContent = "Revoke";
+      button.setAttribute("aria-label", `Revoke API key ${key.name}`);
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          await revokeKey(key.id);
+          await loadKeys();
+        } catch (error) {
+          $("key-create-error").textContent = `Could not revoke key: ${error.message}`;
+          $("key-create-error").hidden = false;
+          button.disabled = false;
+        }
+      });
+      row.append(button);
+    }
+    list.append(row);
+  }
+  if (keys.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "budget-resources";
+    empty.textContent = "No API keys yet.";
+    list.append(empty);
+  }
+}
+
+async function loadKeys() {
+  if (!isGitHubSession()) return;
+  try {
+    renderKeys((await listKeys()).keys);
+  } catch (error) {
+    if (error.status === 401) return;
+    $("key-create-error").textContent = `Could not load keys: ${error.message}`;
+    $("key-create-error").hidden = false;
+  }
+}
+
+$("key-create-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("key-create-form").querySelector('button[type="submit"]');
+  const details = {
+    name: $("new-key-name").value.trim(),
+    role: $("new-key-role").value,
+    expires_in: `${Number($("new-key-days").value) * 24}h`,
+  };
+  if ($("new-key-env").value) details.permitted_env = $("new-key-env").value;
+  if ($("new-key-cap").value !== "") details.cost_cap = Math.round(Number($("new-key-cap").value) * 100);
+
+  button.disabled = true;
+  $("key-create-error").hidden = true;
+  $("key-created").hidden = true;
+  try {
+    const created = await createKey(details);
+    $("key-created-value").textContent = created.key;
+    $("key-created").hidden = false;
+    $("key-create-form").reset();
+    await loadKeys();
+  } catch (error) {
+    if (error.status === 401) {
+      showLogin("Your session has expired. Sign in again.");
+      return;
+    }
+    $("key-create-error").textContent = `Could not create key: ${error.message}`;
+    $("key-create-error").hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$("admin-key-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("admin-key-form").querySelector('button[type="submit"]');
+  const callerID = $("admin-key-caller").value.trim();
+  button.disabled = true;
+  $("admin-key-message").hidden = true;
+  $("admin-key-created").hidden = true;
+  try {
+    const created = await requestJSON(`/callers/${encodeURIComponent(callerID)}/keys`, "POST", {
+      name: $("admin-key-name").value.trim(),
+      role: $("admin-key-role").value,
+    });
+    $("admin-key-value").textContent = created.key;
+    $("admin-key-created").hidden = false;
+    $("admin-key-form").reset();
+  } catch (error) {
+    if (error.status === 401) {
+      adminSignOut("Your admin session has expired. Sign in again.");
+      return;
+    }
+    $("admin-key-message").className = "admin-message error";
+    $("admin-key-message").textContent = `Could not issue key: ${error.message}`;
+    $("admin-key-message").hidden = false;
+  } finally {
+    button.disabled = false;
   }
 });
 
@@ -682,15 +837,47 @@ $("delete-dialog").addEventListener("close", () => { pendingDelete = null; });
 $("delete-dialog").addEventListener("cancel", (event) => {
   if ($("delete-confirm").disabled) event.preventDefault();
 });
-function signOut() {
-  if (isAdmin()) adminSignOut();
+async function signOut() {
+  const admin = isAdmin();
+  if (admin || isGitHubSession()) await logout();
+  if (admin) adminSignOut();
   else showLogin();
 }
 
 $("sign-out").addEventListener("click", signOut);
-$("admin-sign-out").addEventListener("click", () => adminSignOut());
+$("admin-sign-out").addEventListener("click", signOut);
 window.addEventListener("hashchange", showPage);
 
+async function restoreSession() {
+  try {
+    githubEnabled = (await requestJSON("/auth/providers")).github;
+  } catch (_) {
+    githubEnabled = false;
+  }
+
+  const params = new URLSearchParams(location.search);
+  const loginError = params.get("login_error");
+  if (loginError) {
+    history.replaceState(null, "", location.pathname + location.hash);
+    showLogin(loginErrors[loginError] || loginErrors.internal);
+    return;
+  }
+
+  if (isAdmin() || (signedInAs === "caller" && apiKey)) return;
+  try {
+    const me = await requestJSON("/me");
+    if (me.kind === "caller" && me.session) {
+      signedInAs = "github";
+      sessionStorage.setItem(roleStorage, signedInAs);
+    }
+  } catch (_) {
+    signedInAs = "";
+    sessionStorage.removeItem(roleStorage);
+  }
+}
+
 if (!location.hash || (!isAdmin() && location.hash === "#admin")) location.hash = "#environments";
-showPage();
-if (isAdmin() || isCaller()) loadEnvironments();
+restoreSession().then(() => {
+  showPage();
+  if (isAdmin() || isCaller()) loadEnvironments();
+});

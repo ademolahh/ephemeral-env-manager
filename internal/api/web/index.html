@@ -70,6 +70,10 @@
               <button id="caller-login-choice" type="button" class="active" aria-pressed="true">Caller</button>
               <button id="admin-login-choice" type="button" aria-pressed="false">Admin</button>
             </div>
+            <a id="github-login-button" class="key-button github-button" href="/auth/github/login" hidden>
+              Sign in with GitHub <span>→</span>
+            </a>
+            <div id="login-divider" class="login-divider" hidden><span>or use an API key</span></div>
             <form id="key-form">
               <label for="api-key">API key</label>
               <div class="key-input">
@@ -78,7 +82,7 @@
                   type="password"
                   autocomplete="off"
                   spellcheck="false"
-                  placeholder="eem_••••••••••••••••"
+                  placeholder="••••••••••••••••••••"
                   required
                 /><button
                   type="button"
@@ -169,6 +173,46 @@
             <p id="prod-bug-cost-used" class="budget-resources"></p>
             <p id="budget-error" class="budget-error" role="alert" hidden></p>
           </section>
+          <section id="keys-panel" class="budget-panel" aria-labelledby="keys-heading" hidden>
+            <div class="budget-heading">
+              <div>
+                <h2 id="keys-heading">API keys</h2>
+                <p>
+                  Keys for scripts and agents. Agent keys share your budget and quota,
+                  and only see the environments they create.
+                </p>
+              </div>
+            </div>
+            <form id="key-create-form" class="admin-card key-create-form">
+              <div class="admin-fields">
+                <div><label for="new-key-name">Name</label><input id="new-key-name" type="text" maxlength="64" autocomplete="off" required /></div>
+                <div>
+                  <label for="new-key-role">Role</label>
+                  <select id="new-key-role"><option value="user">User</option><option value="agent">Agent</option></select>
+                </div>
+                <div><label for="new-key-days">Expires in (days)</label><input id="new-key-days" type="number" min="1" max="365" step="1" value="30" required /></div>
+              </div>
+              <div class="admin-fields">
+                <div>
+                  <label for="new-key-env">Highest environment type</label>
+                  <select id="new-key-env">
+                    <option value="">Same as mine</option>
+                    <option value="REGULAR_TESTING">REGULAR_TESTING</option>
+                    <option value="PR_REVIEW">PR_REVIEW</option>
+                    <option value="PROD_BUG">PROD_BUG</option>
+                  </select>
+                </div>
+                <div><label for="new-key-cap">Spend cap (USD, optional)</label><input id="new-key-cap" type="number" min="0" step="any" /></div>
+              </div>
+              <button class="admin-submit" type="submit">Create key</button>
+              <p id="key-create-error" class="admin-message error" role="alert" hidden></p>
+              <div id="key-created" class="caller-success" role="status" hidden>
+                Copy this key now. It will not be shown again.
+                <code id="key-created-value"></code>
+              </div>
+            </form>
+            <div id="keys-list" class="keys-list"></div>
+          </section>
           <section class="capacity-panel" aria-labelledby="capacity-heading">
             <div class="budget-heading">
               <div>
@@ -248,7 +292,7 @@
             <div class="admin-grid">
               <form id="caller-form" class="admin-card">
                 <h3>Create caller</h3>
-                <p class="caller-create-note">GitHub details are optional. Creating a caller does not issue an API key.</p>
+                <p class="caller-create-note">GitHub details are optional. A caller with a GitHub ID can sign in with GitHub.</p>
                 <label for="github-login">GitHub login (optional)</label>
                 <input id="github-login" name="github-login" type="text" autocomplete="off" />
                 <label for="github-id">GitHub ID (optional)</label>
@@ -257,7 +301,22 @@
                 <p id="caller-error" class="form-error" role="alert" hidden></p>
                 <div id="caller-success" class="caller-success" role="status" hidden>
                   Caller created. ID: <code id="caller-created-id"></code>
-                  <p>You need an API key for this caller to sign in.</p>
+                  <p>Issue an API key below, or let them sign in with GitHub.</p>
+                </div>
+              </form>
+              <form id="admin-key-form" class="admin-card" hidden>
+                <h3>Issue API key</h3>
+                <label for="admin-key-caller">Caller ID</label>
+                <input id="admin-key-caller" type="text" required />
+                <label for="admin-key-name">Key name</label>
+                <input id="admin-key-name" type="text" maxlength="64" required />
+                <label for="admin-key-role">Role</label>
+                <select id="admin-key-role"><option value="user">User</option><option value="agent">Agent</option></select>
+                <button class="admin-submit" type="submit">Issue key</button>
+                <p id="admin-key-message" class="admin-message" role="status" hidden></p>
+                <div id="admin-key-created" class="caller-success" role="status" hidden>
+                  Copy this key now. It will not be shown again.
+                  <code id="admin-key-value"></code>
                 </div>
               </form>
               <form id="admin-budget-form" class="admin-card" hidden>
