@@ -483,7 +483,7 @@ function renderEnvironments(page) {
     const actions = document.createElement("div");
     actions.className = "env-card-actions";
     // access_url carries the proxy token; the proxy swaps it for a cookie.
-    const target = env.access_url || env.endpoint;
+    const target = env.status === "RUNNING" ? env.access_url : null;
     if (target && /^https?:\/\//i.test(target)) {
       const link = document.createElement("a");
       link.className = "endpoint";
