@@ -8,13 +8,7 @@ Humans use it through a REST API and a dashboard. AI agents use it through MCP: 
 
 ![Signing in, opening an environment through the proxy and deleting another](docs/images/demo.gif)
 
-What it enforces:
-
-- **Priorities:** `PROD_BUG` > `PR_REVIEW` > `REGULAR_TESTING`. When the capacity pool is full, a higher type preempts lower ones.
-- **Limits:** every caller has a resource quota and a cost budget. Every provider has a capacity pool; normal types can use 90% of it and `PROD_BUG` all of it.
-- **Cost:** the estimate is reserved at creation and the actual runtime is charged on delete.
-- **Readiness:** an environment is `RUNNING` only once every container is running and healthy.
-- **Recovery:** all state lives in Postgres. A worker expires environments, reclaims stuck ones and removes containers that no record owns.
+Every caller has a resource quota and a cost budget, and every environment has a type: `PROD_BUG` outranks `PR_REVIEW`, which outranks `REGULAR_TESTING`. When capacity runs out, a higher type preempts lower ones. All state lives in Postgres, and a worker expires environments, reclaims stuck ones and removes containers no record owns.
 
 ## Architecture
 
@@ -173,25 +167,21 @@ claude mcp add --transport http eem http://localhost:8080/mcp --header "Authoriz
 
 The agent gets `create_environment`, `get_environment`, `list_environments`, `exec`, `delete_environment`, `list_templates`, `get_template`, `get_budget` and `get_capacity`. An agent key shares its owner's quota and budget, can be capped lower, and only sees the environments it created.
 
-## Design decisions
+## How it works
 
-- **One transaction decides admission.** `POST /envs` locks the caller row, the API key row and the capacity pool row (`SELECT … FOR UPDATE`, always in that order), then checks permission, quota, budget and capacity and inserts the environment. Concurrent requests can't both take the last slot or overspend a budget, and the fixed lock order rules out deadlocks. Tests drive these races against a real Postgres.
-- **Preemption is part of admission.** When a pool is full, the same transaction picks victims from lower-priority types, lowest priority first and newest first within a type, and marks them `DELETING`. It skips victims that wouldn't free the resource that is short. The new environment is only admitted if it then fits.
-- **Headroom for incidents.** Normal types can fill 90% of a pool; `PROD_BUG` can use 100% and preempt the rest. A production bug can always get a reproduction environment, even during a busy review day.
-- **Money is integers.** Prices are micro-USD per hour and budgets are cents, so there's no floating point in billing. Partial cores are charged pro rata and rounded up. The estimate is reserved when an environment is created, and the actual runtime is charged when it's deleted, in the same statement that releases its capacity.
-- **Status changes are guarded updates.** Every transition is `UPDATE … WHERE status = ANY(allowed)`, so the API, the background provisioner and the worker can race on one environment safely. The loser sees `invalid_transition` and moves on.
-- **Postgres is the source of truth; the worker reconciles.** If eem dies after committing but before Docker finishes, the worker resolves the stuck environment. If containers exist with no live record, the worker removes them. On startup eem resumes readiness checks for environments it was provisioning.
-- **Access tokens need no storage.** An environment's token is an HMAC of its id under `PROXY_SECRET`, so eem and the proxy agree on it without sharing a table. The proxy swaps it for a host-only cookie and strips it before the request reaches the workload.
-- **Each environment gets its own internal network.** Workloads can't reach the internet, other environments or the control plane. The proxy is the only way in, and it listens only on its edge address.
+`POST /envs` decides admission in one transaction. It locks the caller, the API key and the capacity pool, always in that order, so concurrent requests can't both take the last slot or overspend a budget and the fixed order rules out deadlocks. Inside that transaction it checks permission, quota, budget and capacity. If the pool is full, it picks lower-priority victims (lowest type first, newest first within a type) and admits the new environment only if it then fits. Normal types can fill 90% of a pool; `PROD_BUG` can use all of it, so a production bug always gets a reproduction environment. Tests drive these races against a real Postgres.
+
+Money is integers: prices are micro-USD per hour and budgets are cents. An environment's estimated cost is reserved when it's created, and its actual runtime is charged when it's deleted, in the same statement that releases its capacity.
+
+Every status change is an `UPDATE … WHERE status = ANY(allowed)`, so the API, the background provisioner and the worker can race on one environment and the loser just sees `invalid_transition`. Because Postgres is the source of truth, a crash between commit and container creation is recovered by the worker, and eem resumes readiness checks for anything still provisioning when it restarts.
+
+Each environment runs on its own internal Docker network, with no internet access and no route to other environments or the control plane. The proxy is the only way in. It checks an access token that is an HMAC of the environment's id under `PROXY_SECRET`, so eem and the proxy agree on it without sharing state, and it strips the token before forwarding.
 
 ## Security model
 
-EEM runs images that callers choose and lets them run commands inside, so isolation and limits matter:
+EEM runs images that callers choose and lets them run commands inside, so the containers are locked down: `no-new-privileges`, a process limit (`DOCKER_PIDS_LIMIT`, default 1024), CPU and memory limits with no extra swap, capped logs, and no `NET_RAW`, `MKNOD`, `AUDIT_WRITE` or `SETFCAP`. Disk is reserved and priced, and enforced per container only with `DOCKER_DISK_QUOTA=true`, which needs overlay2 on xfs with `pquota`.
 
-- **Containers** run with `no-new-privileges`, a process limit (`DOCKER_PIDS_LIMIT`, default 1024), CPU and memory limits with no extra swap, capped logs, and without `NET_RAW`, `MKNOD`, `AUDIT_WRITE` and `SETFCAP`. Disk is reserved and priced, and enforced per container when `DOCKER_DISK_QUOTA=true` (this needs overlay2 on xfs with `pquota`).
-- **Control-plane services** run as the distroless nonroot user with a read-only root filesystem and no capabilities. Postgres and Redis publish no host ports, the admin ports bind to localhost, and Redis needs a password.
-- **Credentials:** API keys and session tokens are random 256-bit values stored only as SHA-256 hashes. Admin passwords use bcrypt. GitHub sign-in uses OAuth with state and PKCE. Cross-origin form posts are rejected.
-- **Templates:** admins own the catalog. Inline templates are labeled `inline:<name>` with a hash of their spec, and `INLINE_TEMPLATES=false` turns them off.
+The control-plane services run as the distroless nonroot user with a read-only root filesystem and no capabilities. Postgres and Redis publish no host ports, the admin ports bind to localhost, and Redis needs a password. API keys and session tokens are random 256-bit values stored only as SHA-256 hashes, admin passwords use bcrypt, and GitHub sign-in uses OAuth with state and PKCE. Admins own the template catalog: inline templates are recorded as `inline:<name>` with a hash of their spec, and `INLINE_TEMPLATES=false` turns them off.
 
 What it doesn't protect against: eem and the worker can use the Docker socket, so they are as trusted as root on the host. Environments share the host kernel, so treat them as test isolation, not a sandbox for hostile code. A gVisor or Kata runtime would be the next step.
 
@@ -239,14 +229,11 @@ Integration tests run against real Postgres, Redis and Docker. The test database
 
 Schema changes go in a new numbered migration in [migrations/](migrations/), applied by `migrate` in compose. `make migrate-new name=…` creates one.
 
-## Limitations and roadmap
+## Limitations
 
-- **Docker on one host only.** Providers sit behind an interface (`Create`, `Delete`, `Status`, `Address`, `Exec`, `List`), but Docker is the only implementation.
-- **One eem and one worker.** Provisioning and readiness checks run in eem's memory, and eem resumes them on restart. A second eem would see the first one's in-flight environments as missing. Worker loops are idempotent but have no leader election.
-- **Plain HTTP.** Put TLS termination in front of the proxy and eem.
-- **Exec isn't streaming.** It returns output when the command ends, capped at 1 MiB and 5 minutes.
-- **Template env values** are stored as plain JSON. Don't put production secrets in templates.
-- **Access tokens can't be revoked one at a time.** They end with the environment, or for all environments when `PROXY_SECRET` rotates.
+Docker on a single host is the only provider, though providers sit behind an interface (`Create`, `Delete`, `Status`, `Address`, `Exec`, `List`). Run one eem and one worker: provisioning runs in eem's memory, so a second eem would see the first one's in-flight environments as missing, and the worker loops have no leader election.
+
+Everything is plain HTTP, so put TLS in front of the proxy and eem. `exec` isn't streaming; it returns when the command ends, stops after 5 minutes and cuts output at 1 MiB, setting `truncated`. Template env values are stored as plain JSON, so keep production secrets out of templates. Access tokens can't be revoked one at a time: they end with the environment, or for every environment when `PROXY_SECRET` rotates.
 
 ## License
 

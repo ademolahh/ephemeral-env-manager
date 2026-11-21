@@ -24,7 +24,7 @@ Branch on `code`, since the message can change. Codes:
 
 | Status | Codes |
 | --- | --- |
-| 400 | `bad_request`, `invalid_env_type`, `no_provider`, `provider_not_allowed`, `provider_unavailable` |
+| 400 | `bad_request`, `invalid_env_type`, `no_provider`, `provider_not_allowed`, `provider_unavailable`, `empty_command` |
 | 401 | `unauthorized` |
 | 403 | `forbidden`, `not_permitted`, `quota_exceeded`, `budget_exceeded`, `budget_expired`, `prod_bug_cap_exceeded`, `key_cost_cap_exceeded`, `api_key_inactive` |
 | 404 | `not_found`, `env_not_found`, `caller_not_found`, `template_not_found`, `api_key_not_found` |
@@ -96,7 +96,7 @@ The owner or an admin. The environment must be `RUNNING`.
 { "cmd": ["sh", "-c", "go test ./..."] }
 ```
 
-The response is `{"output": "...", "exit_code": 0}`. A non-zero exit is still `200`. Output is capped at 1 MiB and the command times out after 5 minutes (`504`).
+The response is `{"output": "...", "exit_code": 0, "truncated": false}`. A non-zero exit is still `200`. Output stops at 1 MiB, with `truncated` set, and the command times out after 5 minutes (`504`).
 
 ## Templates
 
