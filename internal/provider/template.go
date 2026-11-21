@@ -71,6 +71,16 @@ func (t Template) TotalResources() Resources {
 
 // HourlyCost is the template's price per hour in micro-USD. Partial cores and
 // GB are priced pro rata and the total is rounded up to the next micro-USD.
+//
+//	cost = ⌈ PerCPUCore · CPUMillis/1000 + PerRAMGB · RAMMB/1024 ⌉ + PerDiskGB · DiskGB
+//
+// Both fractions go over the common denominator 1000·1024 so the sum is exact
+// in integers before the single round-up:
+//
+//	cost = ⌈ (PerCPUCore · CPUMillis · 1024 + PerRAMGB · RAMMB · 1000) / 1024000 ⌉ + PerDiskGB · DiskGB
+//
+// For example, 500 millicores and 512 MiB at 1000 per core and per GB cost
+// ⌈(1000·500·1024 + 1000·512·1000) / 1024000⌉ = ⌈500 + 500⌉ = 1000.
 func (t Template) HourlyCost(p Prices) int64 {
 	const scale = 1000 * 1024
 	r := t.TotalResources()
