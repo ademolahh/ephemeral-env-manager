@@ -28,12 +28,12 @@ func getCaller(t *testing.T, tx pgx.Tx, id uuid.UUID) callerRow {
 	var r callerRow
 	err := tx.QueryRow(context.Background(), `
 		SELECT github_login, github_id, permitted_env::text,
-			quota_cpu_cores, quota_ram_gb, quota_disk_gb,
+			quota_cpu_millis, quota_ram_mb, quota_disk_gb,
 			cost_budget_total, budget_expires_at, budget_set_at
 		FROM callers WHERE id = $1`, id,
 	).Scan(
 		&r.GithubLogin, &r.GithubID, &r.PermittedEnv,
-		&r.Quota.CPUCore, &r.Quota.RAMGB, &r.Quota.DiskGB,
+		&r.Quota.CPUMillis, &r.Quota.RAMMB, &r.Quota.DiskGB,
 		&r.CostBudgetTotal, &r.BudgetExpiresAt, &r.BudgetSetAt,
 	)
 	if err != nil {
@@ -47,7 +47,7 @@ func newCaller() NewCaller {
 		GithubLogin:     new("octocat"),
 		GithubID:        new("583231"),
 		PermittedEnv:    EnvPRReview,
-		Quota:           provider.Resources{CPUCore: 4, RAMGB: 16, DiskGB: 50},
+		Quota:           provider.Resources{CPUMillis: 4000, RAMMB: 16384, DiskGB: 50},
 		CostBudgetTotal: 1234,
 		BudgetExpiresAt: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
@@ -118,12 +118,12 @@ func TestCreateCallerErrors(t *testing.T) {
 	}{
 		{
 			name:   "negative cpu quota",
-			mutate: func(c *NewCaller) { c.Quota.CPUCore = -1 },
+			mutate: func(c *NewCaller) { c.Quota.CPUMillis = -1 },
 			code:   "23514",
 		},
 		{
 			name:   "negative ram quota",
-			mutate: func(c *NewCaller) { c.Quota.RAMGB = -1 },
+			mutate: func(c *NewCaller) { c.Quota.RAMMB = -1 },
 			code:   "23514",
 		},
 		{
@@ -200,7 +200,7 @@ func TestSetCallerBudget(t *testing.T) {
 		t.Fatalf("backdate budget_set_at: %v", err)
 	}
 
-	quota := provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100}
+	quota := provider.Resources{CPUMillis: 8000, RAMMB: 32768, DiskGB: 100}
 	budget := int64(9999)
 	expires := time.Date(2031, 6, 7, 8, 9, 10, 0, time.UTC)
 	if err := SetCallerBudget(ctx, tx, id, quota, budget, expires); err != nil {
@@ -246,7 +246,7 @@ func TestSetCallerBudgetInvalid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCaller() error = %v", err)
 	}
-	err = SetCallerBudget(ctx, tx, id, provider.Resources{CPUCore: -1}, 0, time.Now())
+	err = SetCallerBudget(ctx, tx, id, provider.Resources{CPUMillis: -1000}, 0, time.Now())
 	if errors.Is(err, ErrCallerNotFound) {
 		t.Fatalf("SetCallerBudget() error = %v, want check violation", err)
 	}

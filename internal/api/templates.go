@@ -48,17 +48,17 @@ type resourceOverrides struct {
 }
 
 type resourcePatch struct {
-	CPUCore *int `json:"cpu_core,omitempty"`
-	RAMGB   *int `json:"ram_gb,omitempty"`
-	DiskGB  *int `json:"disk_gb,omitempty"`
+	CPUMillis *int `json:"cpu_millis,omitempty"`
+	RAMMB     *int `json:"ram_mb,omitempty"`
+	DiskGB    *int `json:"disk_gb,omitempty"`
 }
 
 func (p resourcePatch) apply(r *provider.Resources) {
-	if p.CPUCore != nil {
-		r.CPUCore = *p.CPUCore
+	if p.CPUMillis != nil {
+		r.CPUMillis = *p.CPUMillis
 	}
-	if p.RAMGB != nil {
-		r.RAMGB = *p.RAMGB
+	if p.RAMMB != nil {
+		r.RAMMB = *p.RAMMB
 	}
 	if p.DiskGB != nil {
 		r.DiskGB = *p.DiskGB
@@ -234,8 +234,8 @@ func validAliases(what string, aliases []string, names map[string]bool) error {
 }
 
 func validResources(what string, r provider.Resources) error {
-	if r.CPUCore < 1 || r.RAMGB < 1 || r.DiskGB < 1 {
-		return fmt.Errorf("%s resources must be at least 1 cpu_core, 1 ram_gb and 1 disk_gb", what)
+	if r.CPUMillis < provider.MinCPUMillis || r.RAMMB < provider.MinRAMMB || r.DiskGB < 1 {
+		return fmt.Errorf("%s resources must be at least %d cpu_millis, %d ram_mb and 1 disk_gb", what, provider.MinCPUMillis, provider.MinRAMMB)
 	}
 	return nil
 }

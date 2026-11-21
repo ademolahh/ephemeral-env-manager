@@ -38,7 +38,7 @@ func (f fixture) caller(t *testing.T, mutate func(*db.NewCaller)) uuid.UUID {
 	t.Helper()
 	c := db.NewCaller{
 		PermittedEnv:    db.EnvProdBug,
-		Quota:           provider.Resources{CPUCore: 1000, RAMGB: 1000, DiskGB: 1000},
+		Quota:           provider.Resources{CPUMillis: 1000000, RAMMB: 1024000, DiskGB: 1000},
 		CostBudgetTotal: 100000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	}
@@ -115,22 +115,22 @@ func (f fixture) age(t *testing.T, id uuid.UUID, d time.Duration) {
 }
 
 func cpu(n int) provider.Resources {
-	return provider.Resources{CPUCore: n}
+	return provider.Resources{CPUMillis: n * 1000}
 }
 
 func TestCreateReservesCapacity(t *testing.T) {
-	f := newFixture(t, provider.Resources{CPUCore: 10, RAMGB: 10, DiskGB: 10})
+	f := newFixture(t, provider.Resources{CPUMillis: 10000, RAMMB: 10240, DiskGB: 10})
 	callerID := f.caller(t, nil)
 
-	f.mustCreate(t, callerID, db.EnvRegularTesting, provider.Resources{CPUCore: 2, RAMGB: 3, DiskGB: 4})
+	f.mustCreate(t, callerID, db.EnvRegularTesting, provider.Resources{CPUMillis: 2000, RAMMB: 3072, DiskGB: 4})
 
-	if got, want := f.available(t), (provider.Resources{CPUCore: 8, RAMGB: 7, DiskGB: 6}); got != want {
+	if got, want := f.available(t), (provider.Resources{CPUMillis: 8000, RAMMB: 7168, DiskGB: 6}); got != want {
 		t.Errorf("available = %+v, want %+v", got, want)
 	}
 }
 
 func TestCreateFailureReleasesReservation(t *testing.T) {
-	f := newFixture(t, provider.Resources{CPUCore: 10, RAMGB: 10, DiskGB: 10})
+	f := newFixture(t, provider.Resources{CPUMillis: 10000, RAMMB: 10240, DiskGB: 10})
 	callerID := f.caller(t, func(c *db.NewCaller) {
 		c.Quota = cpu(2)
 		c.CostBudgetTotal = 1
@@ -144,7 +144,7 @@ func TestCreateFailureReleasesReservation(t *testing.T) {
 	if got := f.status(t, id); got != db.EnvFailed {
 		t.Fatalf("status = %s, want %s", got, db.EnvFailed)
 	}
-	if got, want := f.available(t), (provider.Resources{CPUCore: 10, RAMGB: 10, DiskGB: 10}); got != want {
+	if got, want := f.available(t), (provider.Resources{CPUMillis: 10000, RAMMB: 10240, DiskGB: 10}); got != want {
 		t.Errorf("available = %+v, want %+v", got, want)
 	}
 
@@ -197,26 +197,26 @@ func TestCreateInvalidType(t *testing.T) {
 }
 
 func TestCreateQuota(t *testing.T) {
-	f := newFixture(t, provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 100})
+	f := newFixture(t, provider.Resources{CPUMillis: 100000, RAMMB: 102400, DiskGB: 100})
 	callerID := f.caller(t, func(c *db.NewCaller) {
-		c.Quota = provider.Resources{CPUCore: 4, RAMGB: 8, DiskGB: 10}
+		c.Quota = provider.Resources{CPUMillis: 4000, RAMMB: 8192, DiskGB: 10}
 	})
 
-	first := f.mustCreate(t, callerID, db.EnvRegularTesting, provider.Resources{CPUCore: 3, RAMGB: 4, DiskGB: 5})
+	first := f.mustCreate(t, callerID, db.EnvRegularTesting, provider.Resources{CPUMillis: 3000, RAMMB: 4096, DiskGB: 5})
 
-	if _, err := f.create(callerID, db.EnvRegularTesting, provider.Resources{CPUCore: 2, RAMGB: 1, DiskGB: 1}); !errors.Is(err, ErrQuotaExceeded) {
+	if _, err := f.create(callerID, db.EnvRegularTesting, provider.Resources{CPUMillis: 2000, RAMMB: 1024, DiskGB: 1}); !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("Create() over cpu quota error = %v, want ErrQuotaExceeded", err)
 	}
-	if _, err := f.create(callerID, db.EnvProdBug, provider.Resources{CPUCore: 1, RAMGB: 5, DiskGB: 1}); !errors.Is(err, ErrQuotaExceeded) {
+	if _, err := f.create(callerID, db.EnvProdBug, provider.Resources{CPUMillis: 1000, RAMMB: 5120, DiskGB: 1}); !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("Create() PROD_BUG over ram quota error = %v, want ErrQuotaExceeded", err)
 	}
 
-	f.mustCreate(t, callerID, db.EnvRegularTesting, provider.Resources{CPUCore: 1, RAMGB: 4, DiskGB: 5})
+	f.mustCreate(t, callerID, db.EnvRegularTesting, provider.Resources{CPUMillis: 1000, RAMMB: 4096, DiskGB: 5})
 
 	if err := db.MarkEnvironmentDeleting(context.Background(), f.q, first); err != nil {
 		t.Fatalf("MarkEnvironmentDeleting() error = %v", err)
 	}
-	if _, err := f.create(callerID, db.EnvRegularTesting, provider.Resources{CPUCore: 3, RAMGB: 4, DiskGB: 5}); err != nil {
+	if _, err := f.create(callerID, db.EnvRegularTesting, provider.Resources{CPUMillis: 3000, RAMMB: 4096, DiskGB: 5}); err != nil {
 		t.Errorf("Create() after deleting error = %v, want quota freed", err)
 	}
 }
@@ -408,14 +408,14 @@ func TestCreatePreemptsLowestPriorityFirst(t *testing.T) {
 }
 
 func TestCreatePreemptsOnlyWhatHelps(t *testing.T) {
-	f := newFixture(t, provider.Resources{CPUCore: 10, RAMGB: 10})
+	f := newFixture(t, provider.Resources{CPUMillis: 10000, RAMMB: 10240})
 	callerID := f.caller(t, nil)
 
-	ramHeavy := f.mustCreate(t, callerID, db.EnvRegularTesting, provider.Resources{CPUCore: 1, RAMGB: 9})
+	ramHeavy := f.mustCreate(t, callerID, db.EnvRegularTesting, provider.Resources{CPUMillis: 1000, RAMMB: 9216})
 	f.age(t, ramHeavy, time.Minute)
-	cpuOnly := f.mustCreate(t, callerID, db.EnvRegularTesting, provider.Resources{CPUCore: 4})
+	cpuOnly := f.mustCreate(t, callerID, db.EnvRegularTesting, provider.Resources{CPUMillis: 4000})
 
-	f.mustCreate(t, callerID, db.EnvPRReview, provider.Resources{CPUCore: 1, RAMGB: 5})
+	f.mustCreate(t, callerID, db.EnvPRReview, provider.Resources{CPUMillis: 1000, RAMMB: 5120})
 
 	if got := f.status(t, cpuOnly); got != db.EnvRunning {
 		t.Errorf("cpu-only env status = %s, want %s", got, db.EnvRunning)
@@ -509,15 +509,15 @@ func TestLowerPriority(t *testing.T) {
 
 func TestCapacity(t *testing.T) {
 	got := Capacity(db.CapacityPool{
-		Default:   provider.Resources{CPUCore: 10, RAMGB: 100, DiskGB: 1000},
-		Available: provider.Resources{CPUCore: 5, RAMGB: 4, DiskGB: 1000},
+		Default:   provider.Resources{CPUMillis: 10000, RAMMB: 102400, DiskGB: 1000},
+		Available: provider.Resources{CPUMillis: 5000, RAMMB: 4096, DiskGB: 1000},
 	})
 	want := PoolCapacity{
-		Total:       provider.Resources{CPUCore: 10, RAMGB: 100, DiskGB: 1000},
-		Used:        provider.Resources{CPUCore: 5, RAMGB: 96, DiskGB: 0},
-		NormalLimit: provider.Resources{CPUCore: 9, RAMGB: 90, DiskGB: 900},
-		NormalFree:  provider.Resources{CPUCore: 4, RAMGB: 0, DiskGB: 900},
-		ProdBugFree: provider.Resources{CPUCore: 5, RAMGB: 4, DiskGB: 1000},
+		Total:       provider.Resources{CPUMillis: 10000, RAMMB: 102400, DiskGB: 1000},
+		Used:        provider.Resources{CPUMillis: 5000, RAMMB: 98304, DiskGB: 0},
+		NormalLimit: provider.Resources{CPUMillis: 9000, RAMMB: 92160, DiskGB: 900},
+		NormalFree:  provider.Resources{CPUMillis: 4000, RAMMB: 0, DiskGB: 900},
+		ProdBugFree: provider.Resources{CPUMillis: 5000, RAMMB: 4096, DiskGB: 1000},
 	}
 	if got != want {
 		t.Errorf("Capacity() = %+v, want %+v", got, want)

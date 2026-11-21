@@ -28,7 +28,7 @@ func (s server) signedIn(t *testing.T, permitted db.EnvType) (uuid.UUID, string)
 	t.Helper()
 	callerID, err := db.CreateCaller(context.Background(), s.tx, db.NewCaller{
 		PermittedEnv:    permitted,
-		Quota:           provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 500},
+		Quota:           provider.Resources{CPUMillis: 100000, RAMMB: 102400, DiskGB: 500},
 		CostBudgetTotal: 10000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})

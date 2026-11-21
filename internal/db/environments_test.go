@@ -17,7 +17,7 @@ func newEnvironment(callerID uuid.UUID) NewEnvironment {
 		CallerID:        callerID,
 		Type:            EnvPRReview,
 		Provider:        provider.Docker,
-		Resources:       provider.Resources{CPUCore: 3, RAMGB: 9, DiskGB: 22},
+		Resources:       provider.Resources{CPUMillis: 3000, RAMMB: 9216, DiskGB: 22},
 		HourlyRate:      54569,
 		TTL:             4 * time.Hour,
 		TemplateName:    "clear-dashboard",
@@ -108,7 +108,7 @@ func TestCreateEnvironmentErrors(t *testing.T) {
 		{name: "unknown caller", mutate: func(e *NewEnvironment) { e.CallerID = uuid.New() }, code: "23503"},
 		{name: "invalid type", mutate: func(e *NewEnvironment) { e.Type = "NOPE" }, code: "22P02"},
 		{name: "invalid provider", mutate: func(e *NewEnvironment) { e.Provider = "aws" }, code: "22P02"},
-		{name: "negative resources", mutate: func(e *NewEnvironment) { e.Resources.RAMGB = -1 }, code: "23514"},
+		{name: "negative resources", mutate: func(e *NewEnvironment) { e.Resources.RAMMB = -1 }, code: "23514"},
 		{name: "negative hourly rate", mutate: func(e *NewEnvironment) { e.HourlyRate = -1 }, code: "23514"},
 	}
 	for _, tt := range tests {

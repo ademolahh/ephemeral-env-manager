@@ -51,7 +51,7 @@ func TestGetBudgetShowsGivenAndUsed(t *testing.T) {
 	if want := got.CostBudget - got.CostUsed; got.CostRemaining != want {
 		t.Errorf("cost remaining = %d, want %d", got.CostRemaining, want)
 	}
-	if want := (provider.Resources{CPUCore: 3, RAMGB: 9, DiskGB: 22}); got.ResourcesUsed != want {
+	if want := (provider.Resources{CPUMillis: 3000, RAMMB: 9216, DiskGB: 22}); got.ResourcesUsed != want {
 		t.Errorf("resources used = %+v, want %+v", got.ResourcesUsed, want)
 	}
 }
@@ -106,7 +106,7 @@ func TestSetBudget(t *testing.T) {
 	expires := futureRFC3339()
 
 	rec := s.putBudget(t, admin, target.String(), `{
-		"quota": {"cpu_core": 8, "ram_gb": 32, "disk_gb": 100},
+		"quota": {"cpu_millis": 8000, "ram_mb": 32768, "disk_gb": 100},
 		"cost_budget_total": 2550,
 		"budget_expires_at": "`+expires+`"
 	}`)
@@ -122,7 +122,7 @@ func TestSetBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LockCaller() error = %v", err)
 	}
-	if want := (provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100}); limits.Quota != want {
+	if want := (provider.Resources{CPUMillis: 8000, RAMMB: 32768, DiskGB: 100}); limits.Quota != want {
 		t.Errorf("quota = %+v, want %+v", limits.Quota, want)
 	}
 	if limits.CostBudgetTotal != 2550 {
@@ -144,7 +144,7 @@ func TestSetBudgetForbidden(t *testing.T) {
 	s := newServer(t)
 	target, user := s.callerWithRole(t, db.RoleUser)
 	_, agent := s.callerWithRole(t, db.RoleAgent)
-	body := `{"quota": {"cpu_core": 999, "ram_gb": 999, "disk_gb": 999}, "cost_budget_total": 99900, "budget_expires_at": "` + futureRFC3339() + `"}`
+	body := `{"quota": {"cpu_millis": 999000, "ram_mb": 1022976, "disk_gb": 999}, "cost_budget_total": 99900, "budget_expires_at": "` + futureRFC3339() + `"}`
 
 	for name, key := range map[string]string{"user on own budget": user, "agent": agent} {
 		if rec := s.putBudget(t, key, target.String(), body); rec.Code != http.StatusForbidden {
@@ -159,7 +159,7 @@ func TestSetBudgetForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LockCaller() error = %v", err)
 	}
-	if limits.Quota.CPUCore == 999 {
+	if limits.Quota.CPUMillis == 999000 {
 		t.Error("quota changed by a non-admin")
 	}
 }
@@ -185,7 +185,7 @@ func TestSetBudgetRejected(t *testing.T) {
 		{name: "missing quota", id: target.String(), body: `{"cost_budget_total": 100, "budget_expires_at": "` + future + `"}`, code: http.StatusBadRequest, want: "required"},
 		{name: "missing cost budget", id: target.String(), body: `{"quota": {}, "budget_expires_at": "` + future + `"}`, code: http.StatusBadRequest, want: "required"},
 		{name: "missing expiry", id: target.String(), body: `{"quota": {}, "cost_budget_total": 100}`, code: http.StatusBadRequest, want: "required"},
-		{name: "negative quota", id: target.String(), body: `{"quota": {"ram_gb": -1}, "cost_budget_total": 100, "budget_expires_at": "` + future + `"}`, code: http.StatusBadRequest, want: "quota must not be negative"},
+		{name: "negative quota", id: target.String(), body: `{"quota": {"ram_mb": -1024}, "cost_budget_total": 100, "budget_expires_at": "` + future + `"}`, code: http.StatusBadRequest, want: "quota must not be negative"},
 		{name: "negative budget", id: target.String(), body: `{"quota": {}, "cost_budget_total": -1, "budget_expires_at": "` + future + `"}`, code: http.StatusBadRequest, want: "cost_budget_total must not be negative"},
 		{name: "expiry in the past", id: target.String(), body: `{"quota": {}, "cost_budget_total": 100, "budget_expires_at": "` + past + `"}`, code: http.StatusBadRequest, want: "in the future"},
 		{name: "expiry not a timestamp", id: target.String(), body: `{"quota": {}, "cost_budget_total": 100, "budget_expires_at": "tomorrow"}`, code: http.StatusBadRequest, want: "invalid request body"},
@@ -361,7 +361,7 @@ func TestCreateCallerRejected(t *testing.T) {
 		{name: "malformed json", body: `{`, code: http.StatusBadRequest, want: "invalid request body"},
 		{name: "role", body: `{"role": "admin"}`, code: http.StatusBadRequest, want: "unknown field"},
 		{name: "permitted env", body: `{"permitted_env": "PROD_BUG"}`, code: http.StatusBadRequest, want: "unknown field"},
-		{name: "quota", body: `{"quota": {"cpu_core": 100}}`, code: http.StatusBadRequest, want: "unknown field"},
+		{name: "quota", body: `{"quota": {"cpu_millis": 100000}}`, code: http.StatusBadRequest, want: "unknown field"},
 		{name: "duplicate github id", body: `{"github_id": "583231"}`, code: http.StatusConflict, want: "github id already linked"},
 	}
 	for _, tt := range tests {

@@ -108,12 +108,12 @@ type fixture struct {
 func newFixture(t *testing.T, q db.DBTX) fixture {
 	t.Helper()
 	ctx := context.Background()
-	if err := db.SetCapacityPool(ctx, q, provider.Docker, provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000}); err != nil {
+	if err := db.SetCapacityPool(ctx, q, provider.Docker, provider.Resources{CPUMillis: 100000, RAMMB: 102400, DiskGB: 1000}); err != nil {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
 	callerID, err := db.CreateCaller(ctx, q, db.NewCaller{
 		PermittedEnv:    db.EnvProdBug,
-		Quota:           provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000},
+		Quota:           provider.Resources{CPUMillis: 100000, RAMMB: 102400, DiskGB: 1000},
 		CostBudgetTotal: 10000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
@@ -136,7 +136,7 @@ func (f fixture) env(t *testing.T, p provider.Type, status db.EnvStatus, expired
 		CallerID:        f.callerID,
 		Type:            db.EnvRegularTesting,
 		Provider:        p,
-		Resources:       provider.Resources{CPUCore: 1, RAMGB: 1, DiskGB: 1},
+		Resources:       provider.Resources{CPUMillis: 1000, RAMMB: 1024, DiskGB: 1},
 		HourlyRate:      10000,
 		TTL:             time.Hour,
 		TemplateName:    "app",
@@ -387,7 +387,7 @@ func (f fixture) otherCaller(t *testing.T) uuid.UUID {
 	t.Helper()
 	id, err := db.CreateCaller(context.Background(), f.q, db.NewCaller{
 		PermittedEnv:    db.EnvProdBug,
-		Quota:           provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000},
+		Quota:           provider.Resources{CPUMillis: 100000, RAMMB: 102400, DiskGB: 1000},
 		CostBudgetTotal: 10000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})

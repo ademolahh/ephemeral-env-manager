@@ -5,17 +5,17 @@ import (
 )
 
 var dashboard = Template{
-	Workload: Workload{Resources: Resources{CPUCore: 1, RAMGB: 4, DiskGB: 10}},
+	Workload: Workload{Resources: Resources{CPUMillis: 1000, RAMMB: 4096, DiskGB: 10}},
 	Services: []Service{
-		{Name: "postgres", Resources: Resources{CPUCore: 1, RAMGB: 4, DiskGB: 10}},
-		{Name: "redis", Resources: Resources{CPUCore: 1, RAMGB: 1, DiskGB: 2}},
+		{Name: "postgres", Resources: Resources{CPUMillis: 1000, RAMMB: 4096, DiskGB: 10}},
+		{Name: "redis", Resources: Resources{CPUMillis: 1000, RAMMB: 1024, DiskGB: 2}},
 	},
 }
 
 var dockerPrices = Prices{
-	CPUCore: 4048,
-	RAMGB:   4445,
-	DiskGB:  110,
+	PerCPUCore: 4048,
+	PerRAMGB:   4445,
+	PerDiskGB:  110,
 }
 
 func TestTotalResources(t *testing.T) {
@@ -31,13 +31,13 @@ func TestTotalResources(t *testing.T) {
 		},
 		{
 			name: "workload only",
-			tpl:  Template{Workload: Workload{Resources: Resources{CPUCore: 2, RAMGB: 8, DiskGB: 20}}},
-			want: Resources{CPUCore: 2, RAMGB: 8, DiskGB: 20},
+			tpl:  Template{Workload: Workload{Resources: Resources{CPUMillis: 2000, RAMMB: 8192, DiskGB: 20}}},
+			want: Resources{CPUMillis: 2000, RAMMB: 8192, DiskGB: 20},
 		},
 		{
 			name: "workload and services",
 			tpl:  dashboard,
-			want: Resources{CPUCore: 3, RAMGB: 9, DiskGB: 22},
+			want: Resources{CPUMillis: 3000, RAMMB: 9216, DiskGB: 22},
 		},
 	}
 
@@ -80,7 +80,7 @@ func TestHourlyCost(t *testing.T) {
 		},
 		{
 			name:   "workload only",
-			tpl:    Template{Workload: Workload{Resources: Resources{CPUCore: 1, RAMGB: 4, DiskGB: 10}}},
+			tpl:    Template{Workload: Workload{Resources: Resources{CPUMillis: 1000, RAMMB: 4096, DiskGB: 10}}},
 			prices: dockerPrices,
 			want:   22928,
 		},
@@ -90,6 +90,18 @@ func TestHourlyCost(t *testing.T) {
 			prices: dockerPrices,
 			want:   54569,
 		},
+		{
+			name:   "half a core and 512 MiB",
+			tpl:    Template{Workload: Workload{Resources: Resources{CPUMillis: 500, RAMMB: 512, DiskGB: 1}}},
+			prices: Prices{PerCPUCore: 1000, PerRAMGB: 1000, PerDiskGB: 10},
+			want:   1010,
+		},
+		{
+			name:   "partial units round up",
+			tpl:    Template{Workload: Workload{Resources: Resources{CPUMillis: 1, RAMMB: 1}}},
+			prices: Prices{PerCPUCore: 1000, PerRAMGB: 1000},
+			want:   2,
+		},
 	}
 
 	for _, tt := range tests {
@@ -98,5 +110,12 @@ func TestHourlyCost(t *testing.T) {
 				t.Errorf("HourlyCost() = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestResourcesString(t *testing.T) {
+	got := Resources{CPUMillis: 1500, RAMMB: 512, DiskGB: 10}.String()
+	if want := "1.5 cpu, 512 MiB ram, 10 GB disk"; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
 	}
 }

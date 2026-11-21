@@ -281,13 +281,21 @@ function renderBudget(budget) {
   $("budget-error").hidden = true;
 }
 
+// The API reports CPU in millicores and RAM in MiB; show cores and GB.
+const round2 = (n) => Math.round(n * 100) / 100;
 const capacityResources = [
-  ["cpu_core", "CPU", ""],
-  ["ram_gb", "RAM", " GB"],
-  ["disk_gb", "Disk", " GB"],
+  ["cpu_millis", "CPU", "", (v) => round2(v / 1000)],
+  ["ram_mb", "RAM", " GB", (v) => round2(v / 1024)],
+  ["disk_gb", "Disk", " GB", (v) => v],
 ];
 
-function capacityRow(pool, key, label, unit) {
+function formatResources(res) {
+  return capacityResources
+    .map(([key, label, unit, show]) => `${show(res?.[key] ?? 0)}${unit} ${label}`)
+    .join(" · ");
+}
+
+function capacityRow(pool, key, label, unit, show) {
   const total = pool.total[key] || 0;
   const used = pool.used[key] || 0;
   const limit = pool.normal_limit[key] || 0;
@@ -316,13 +324,13 @@ function capacityRow(pool, key, label, unit) {
   const marker = document.createElement("span");
   marker.className = "capacity-marker";
   marker.style.left = `${pct(limit)}%`;
-  marker.title = `Normal limit: ${limit}${unit}`;
+  marker.title = `Normal limit: ${show(limit)}${unit}`;
   track.append(reserved, fill, marker);
 
   const detail = document.createElement("span");
   detail.className = "capacity-detail";
   detail.textContent =
-    `${used} / ${total}${unit} used · ${pool.normal_free[key]}${unit} free for normal · ${pool.prod_bug_free[key]}${unit} for PROD_BUG`;
+    `${show(used)} / ${show(total)}${unit} used · ${show(pool.normal_free[key])}${unit} free for normal · ${show(pool.prod_bug_free[key])}${unit} for PROD_BUG`;
 
   row.append(name, track, detail);
   return row;
@@ -337,8 +345,8 @@ function renderCapacity(capacity) {
     const title = document.createElement("h3");
     title.textContent = pool.provider;
     card.append(title);
-    for (const [key, label, unit] of capacityResources) {
-      card.append(capacityRow(pool, key, label, unit));
+    for (const [key, label, unit, show] of capacityResources) {
+      card.append(capacityRow(pool, key, label, unit, show));
     }
     container.append(card);
   }
@@ -468,7 +476,7 @@ function renderEnvironments(page) {
     details.className = "env-card-details";
     details.append(
       environmentDetail("Provider", env.provider || "—"),
-      environmentDetail("Resources", `${res.cpu_core ?? 0} CPU · ${res.ram_gb ?? 0} GB RAM · ${res.disk_gb ?? 0} GB disk`),
+      environmentDetail("Resources", formatResources(res)),
       environmentDetail("Created", readableDate(env.created_at)),
       environmentDetail("Expires", readableDate(env.expires_at)),
     );
@@ -765,8 +773,8 @@ $("admin-budget-form").addEventListener("submit", async (event) => {
     `/callers/${encodeURIComponent(callerID)}/budget`,
     {
       quota: {
-        cpu_core: Number($("admin-quota-cpu").value),
-        ram_gb: Number($("admin-quota-ram").value),
+        cpu_millis: Math.round(Number($("admin-quota-cpu").value) * 1000),
+        ram_mb: Math.round(Number($("admin-quota-ram").value) * 1024),
         disk_gb: Number($("admin-quota-disk").value),
       },
       cost_budget_total: Math.round(Number($("admin-budget-total").value) * 100),
@@ -784,8 +792,8 @@ $("admin-capacity-form").addEventListener("submit", async (event) => {
     "admin-capacity-message",
     `/capacity/${encodeURIComponent($("admin-capacity-provider").value.trim())}`,
     { total: {
-      cpu_core: Number($("admin-capacity-cpu").value),
-      ram_gb: Number($("admin-capacity-ram").value),
+      cpu_millis: Math.round(Number($("admin-capacity-cpu").value) * 1000),
+      ram_mb: Math.round(Number($("admin-capacity-ram").value) * 1024),
       disk_gb: Number($("admin-capacity-disk").value),
     } },
     "Capacity updated.",
@@ -800,9 +808,9 @@ $("admin-prices-form").addEventListener("submit", async (event) => {
     "admin-prices-message",
     `/prices/${encodeURIComponent($("admin-prices-provider").value.trim())}`,
     {
-      cpu_core: Math.round(Number($("admin-price-cpu").value) * 1e6),
-      ram_gb: Math.round(Number($("admin-price-ram").value) * 1e6),
-      disk_gb: Math.round(Number($("admin-price-disk").value) * 1e6),
+      per_cpu_core: Math.round(Number($("admin-price-cpu").value) * 1e6),
+      per_ram_gb: Math.round(Number($("admin-price-ram").value) * 1e6),
+      per_disk_gb: Math.round(Number($("admin-price-disk").value) * 1e6),
     },
     "Hourly prices updated.",
   );

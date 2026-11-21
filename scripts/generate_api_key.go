@@ -56,7 +56,7 @@ func main() {
 		if callerID == uuid.Nil {
 			id, err := db.CreateCaller(ctx, tx, db.NewCaller{
 				PermittedEnv:    permitted,
-				Quota:           provider.Resources{CPUCore: 5, RAMGB: 16, DiskGB: 50},
+				Quota:           provider.Resources{CPUMillis: 5000, RAMMB: 16384, DiskGB: 50},
 				CostBudgetTotal: 10000,
 				BudgetExpiresAt: time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second),
 			})

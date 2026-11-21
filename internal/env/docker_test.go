@@ -70,9 +70,9 @@ func TestCreateDocker(t *testing.T) {
 		Providers:       []provider.Type{provider.Docker},
 		DefaultProvider: provider.Docker,
 		TTL:             time.Hour,
-		Workload:        provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 1, DiskGB: 1}},
+		Workload:        provider.Workload{Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024, DiskGB: 1}},
 		Services: []provider.Service{
-			{Name: "cache", Image: testImage, Resources: provider.Resources{CPUCore: 1, RAMGB: 1, DiskGB: 1}},
+			{Name: "cache", Image: testImage, Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024, DiskGB: 1}},
 		},
 	}
 
@@ -131,7 +131,7 @@ func TestCreateDockerFailure(t *testing.T) {
 			Version:         "v1",
 			DefaultProvider: provider.Docker,
 			TTL:             time.Hour,
-			Workload:        provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
+			Workload:        provider.Workload{Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}},
 		},
 	})
 	m.Wait()

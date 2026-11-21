@@ -25,7 +25,7 @@ func (s server) get(t *testing.T, key, id string) *httptest.ResponseRecorder {
 
 func TestGetEnv(t *testing.T) {
 	s := newServer(t)
-	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
+	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 	created := s.createEnv(t, key)
 
 	rec := s.get(t, key, created.ID.String())
@@ -46,7 +46,7 @@ func TestGetEnv(t *testing.T) {
 
 func TestGetEnvDeletedHasNoInstanceStatus(t *testing.T) {
 	s := newServer(t)
-	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
+	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 	created := s.createEnv(t, key)
 	s.delete(t, key, created.ID.String())
 
@@ -68,7 +68,7 @@ func TestGetEnvDeletedHasNoInstanceStatus(t *testing.T) {
 
 func TestGetEnvAccess(t *testing.T) {
 	s := newServer(t)
-	owner := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
+	owner := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 	created := s.createEnv(t, owner)
 
 	tests := []struct {

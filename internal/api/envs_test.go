@@ -60,13 +60,13 @@ func newServer(t *testing.T) server {
 	sessions := dbtest.Sessions(t)
 	ctx := context.Background()
 	if err := db.SetHourlyPrices(ctx, tx, provider.Docker, provider.Prices{
-		CPUCore: 4048,
-		RAMGB:   4445,
-		DiskGB:  110,
+		PerCPUCore: 4048,
+		PerRAMGB:   4445,
+		PerDiskGB:  110,
 	}); err != nil {
 		t.Fatalf("SetHourlyPrices() error = %v", err)
 	}
-	if err := db.SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000}); err != nil {
+	if err := db.SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUMillis: 100000, RAMMB: 102400, DiskGB: 1000}); err != nil {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
 	fake := &fakeProvider{}
@@ -128,12 +128,12 @@ const validBody = `{
 		"ttl": "4h",
 		"workload": {
 			"ports": [8080],
-			"resources": {"cpu_core": 1, "ram_gb": 4, "disk_gb": 10},
+			"resources": {"cpu_millis": 1000, "ram_mb": 4096, "disk_gb": 10},
 			"env": {"APP_ENV": "test"}
 		},
 		"services": [
-			{"name": "postgres", "image": "postgres:18", "resources": {"cpu_core": 1, "ram_gb": 4, "disk_gb": 10}, "healthcheck": "pg_isready"},
-			{"name": "redis", "image": "redis:8", "resources": {"cpu_core": 1, "ram_gb": 1, "disk_gb": 2}}
+			{"name": "postgres", "image": "postgres:18", "resources": {"cpu_millis": 1000, "ram_mb": 4096, "disk_gb": 10}, "healthcheck": "pg_isready"},
+			{"name": "redis", "image": "redis:8", "resources": {"cpu_millis": 1000, "ram_mb": 1024, "disk_gb": 2}}
 		]
 	}
 }`
@@ -167,7 +167,7 @@ func decodeEnv(t *testing.T, rec *httptest.ResponseRecorder) db.Environment {
 
 func TestCreateEnv(t *testing.T) {
 	s := newServer(t)
-	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
+	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 
 	rec := s.post(t, key, validBody, nil)
 
@@ -187,7 +187,7 @@ func TestCreateEnv(t *testing.T) {
 	if got.Type != db.EnvRegularTesting || got.Provider != provider.Docker {
 		t.Errorf("type, provider = %s, %s, want REGULAR_TESTING, docker", got.Type, got.Provider)
 	}
-	if want := (provider.Resources{CPUCore: 3, RAMGB: 9, DiskGB: 22}); got.Resources != want {
+	if want := (provider.Resources{CPUMillis: 3000, RAMMB: 9216, DiskGB: 22}); got.Resources != want {
 		t.Errorf("resources = %+v, want %+v", got.Resources, want)
 	}
 	if want := int64(54569); got.HourlyRate != want {
@@ -219,7 +219,7 @@ func TestCreateEnv(t *testing.T) {
 
 func TestCreateEnvIdempotencyKey(t *testing.T) {
 	s := newServer(t)
-	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
+	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 	headers := map[string]string{"Idempotency-Key": "deploy-42"}
 
 	first := s.post(t, key, validBody, headers)
@@ -250,12 +250,12 @@ func TestCreateEnvIdempotencyKey(t *testing.T) {
 
 func TestCreateEnvUnauthorized(t *testing.T) {
 	s := newServer(t)
-	valid := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
+	valid := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 
 	revokedKey, hash := auth.GenerateAPIKey()
 	callerID, err := db.CreateCaller(context.Background(), s.tx, db.NewCaller{
 		PermittedEnv:    db.EnvRegularTesting,
-		Quota:           provider.Resources{CPUCore: 10},
+		Quota:           provider.Resources{CPUMillis: 10000},
 		CostBudgetTotal: 10000,
 		BudgetExpiresAt: time.Now().Add(time.Hour),
 	})
@@ -331,12 +331,12 @@ func TestCreateEnvBadRequest(t *testing.T) {
 		}, want: "positive duration"},
 		{name: "negative workload resources", body: func(t *testing.T) string {
 			return withBody(t, func(m map[string]any) {
-				tpl(m)["workload"].(map[string]any)["resources"] = map[string]any{"cpu_core": -1, "ram_gb": 1, "disk_gb": 1}
+				tpl(m)["workload"].(map[string]any)["resources"] = map[string]any{"cpu_millis": -1000, "ram_mb": 1024, "disk_gb": 1}
 			})
 		}, want: "must be at least 1"},
 		{name: "zero workload cpu", body: func(t *testing.T) string {
 			return withBody(t, func(m map[string]any) {
-				tpl(m)["workload"].(map[string]any)["resources"] = map[string]any{"cpu_core": 0, "ram_gb": 1, "disk_gb": 1}
+				tpl(m)["workload"].(map[string]any)["resources"] = map[string]any{"cpu_millis": 0, "ram_mb": 1024, "disk_gb": 1}
 			})
 		}, want: "workload resources must be at least 1"},
 		{name: "workload resources omitted", body: func(t *testing.T) string {
@@ -344,12 +344,12 @@ func TestCreateEnvBadRequest(t *testing.T) {
 		}, want: "workload resources must be at least 1"},
 		{name: "zero service ram", body: func(t *testing.T) string {
 			return withBody(t, func(m map[string]any) {
-				tpl(m)["services"].([]any)[0].(map[string]any)["resources"] = map[string]any{"cpu_core": 1, "ram_gb": 0, "disk_gb": 1}
+				tpl(m)["services"].([]any)[0].(map[string]any)["resources"] = map[string]any{"cpu_millis": 1000, "ram_mb": 0, "disk_gb": 1}
 			})
 		}, want: "service postgres resources must be at least 1"},
 		{name: "zero service disk", body: func(t *testing.T) string {
 			return withBody(t, func(m map[string]any) {
-				tpl(m)["services"].([]any)[1].(map[string]any)["resources"] = map[string]any{"cpu_core": 1, "ram_gb": 1, "disk_gb": 0}
+				tpl(m)["services"].([]any)[1].(map[string]any)["resources"] = map[string]any{"cpu_millis": 1000, "ram_mb": 1024, "disk_gb": 0}
 			})
 		}, want: "service redis resources must be at least 1"},
 		{name: "port out of range", body: func(t *testing.T) string {
@@ -390,7 +390,7 @@ func TestCreateEnvBadRequest(t *testing.T) {
 		}, want: "image is required"},
 		{name: "negative service resources", body: func(t *testing.T) string {
 			return withBody(t, func(m map[string]any) {
-				tpl(m)["services"].([]any)[1].(map[string]any)["resources"] = map[string]any{"cpu_core": 1, "ram_gb": -4, "disk_gb": 1}
+				tpl(m)["services"].([]any)[1].(map[string]any)["resources"] = map[string]any{"cpu_millis": 1000, "ram_mb": -4096, "disk_gb": 1}
 			})
 		}, want: "must be at least 1"},
 		{name: "invalid type", body: func(t *testing.T) string {
@@ -406,7 +406,7 @@ func TestCreateEnvBadRequest(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := newServer(t)
-			key := s.apiKey(t, db.EnvProdBug, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
+			key := s.apiKey(t, db.EnvProdBug, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 
 			rec := s.post(t, key, tt.body(t), tt.headers)
 
@@ -425,7 +425,7 @@ func TestCreateEnvBadRequest(t *testing.T) {
 
 func TestCreateEnvBodyTooLarge(t *testing.T) {
 	s := newServer(t)
-	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10})
+	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000})
 	body := withBody(t, func(m map[string]any) {
 		tpl(m)["workload"].(map[string]any)["env"] = map[string]any{"BIG": strings.Repeat("x", maxBodyBytes)}
 	})
@@ -447,7 +447,7 @@ func TestCreateEnvRejected(t *testing.T) {
 		{
 			name:      "type not permitted",
 			permitted: db.EnvRegularTesting,
-			quota:     provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50},
+			quota:     provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50},
 			body: func(t *testing.T) string {
 				return withBody(t, func(m map[string]any) { m["type"] = "PROD_BUG" })
 			},
@@ -457,7 +457,7 @@ func TestCreateEnvRejected(t *testing.T) {
 		{
 			name:      "quota exceeded",
 			permitted: db.EnvRegularTesting,
-			quota:     provider.Resources{CPUCore: 2, RAMGB: 20, DiskGB: 50},
+			quota:     provider.Resources{CPUMillis: 2000, RAMMB: 20480, DiskGB: 50},
 			body:      func(*testing.T) string { return validBody },
 			status:    http.StatusForbidden,
 			want:      "quota exceeded",
@@ -465,10 +465,10 @@ func TestCreateEnvRejected(t *testing.T) {
 		{
 			name:      "capacity exhausted",
 			permitted: db.EnvRegularTesting,
-			quota:     provider.Resources{CPUCore: 1000, RAMGB: 1000, DiskGB: 1000},
+			quota:     provider.Resources{CPUMillis: 1000000, RAMMB: 1024000, DiskGB: 1000},
 			body: func(t *testing.T) string {
 				return withBody(t, func(m map[string]any) {
-					tpl(m)["workload"].(map[string]any)["resources"] = map[string]any{"cpu_core": 95, "ram_gb": 1, "disk_gb": 1}
+					tpl(m)["workload"].(map[string]any)["resources"] = map[string]any{"cpu_millis": 95000, "ram_mb": 1024, "disk_gb": 1}
 				})
 			},
 			status: http.StatusServiceUnavailable,
@@ -498,7 +498,7 @@ func TestCreateEnvRejected(t *testing.T) {
 
 func TestCreateEnvInternalErrorHidesDetails(t *testing.T) {
 	s := newServer(t)
-	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
+	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 	if _, err := s.tx.Exec(context.Background(), `ALTER TABLE environments RENAME COLUMN template_name TO tpl_name`); err != nil {
 		t.Fatalf("break schema: %v", err)
 	}

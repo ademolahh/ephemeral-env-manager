@@ -153,7 +153,7 @@ func createEnvironment(t *testing.T, tx pgx.Tx, backend string, status db.EnvSta
 
 	callerID, err := db.CreateCaller(ctx, tx, db.NewCaller{
 		PermittedEnv:    db.EnvPRReview,
-		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
+		Quota:           provider.Resources{CPUMillis: 8000, RAMMB: 32768, DiskGB: 100},
 		CostBudgetTotal: 10000,
 		BudgetExpiresAt: time.Now().Add(time.Hour),
 	})
@@ -165,7 +165,7 @@ func createEnvironment(t *testing.T, tx pgx.Tx, backend string, status db.EnvSta
 		CallerID:        callerID,
 		Type:            db.EnvPRReview,
 		Provider:        provider.Docker,
-		Resources:       provider.Resources{CPUCore: 1, RAMGB: 1, DiskGB: 1},
+		Resources:       provider.Resources{CPUMillis: 1000, RAMMB: 1024, DiskGB: 1},
 		HourlyRate:      0,
 		TTL:             time.Hour,
 		TemplateName:    "t",

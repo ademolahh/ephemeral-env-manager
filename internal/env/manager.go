@@ -690,14 +690,14 @@ func Capacity(pool db.CapacityPool) PoolCapacity {
 
 func normalLimit(total provider.Resources) provider.Resources {
 	return provider.Resources{
-		CPUCore: total.CPUCore * 9 / 10,
-		RAMGB:   total.RAMGB * 9 / 10,
-		DiskGB:  total.DiskGB * 9 / 10,
+		CPUMillis: total.CPUMillis * 9 / 10,
+		RAMMB:     total.RAMMB * 9 / 10,
+		DiskGB:    total.DiskGB * 9 / 10,
 	}
 }
 
 func atLeastZero(r provider.Resources) provider.Resources {
-	return provider.Resources{CPUCore: max(0, r.CPUCore), RAMGB: max(0, r.RAMGB), DiskGB: max(0, r.DiskGB)}
+	return provider.Resources{CPUMillis: max(0, r.CPUMillis), RAMMB: max(0, r.RAMMB), DiskGB: max(0, r.DiskGB)}
 }
 
 func priority(t db.EnvType) int {
@@ -720,19 +720,19 @@ func estimatedCost(rate int64, ttl time.Duration) int64 {
 }
 
 func fits(need, free provider.Resources) bool {
-	return need.CPUCore <= free.CPUCore && need.RAMGB <= free.RAMGB && need.DiskGB <= free.DiskGB
+	return need.CPUMillis <= free.CPUMillis && need.RAMMB <= free.RAMMB && need.DiskGB <= free.DiskGB
 }
 
 func relieves(r, deficit provider.Resources) bool {
-	return (deficit.CPUCore > 0 && r.CPUCore > 0) ||
-		(deficit.RAMGB > 0 && r.RAMGB > 0) ||
+	return (deficit.CPUMillis > 0 && r.CPUMillis > 0) ||
+		(deficit.RAMMB > 0 && r.RAMMB > 0) ||
 		(deficit.DiskGB > 0 && r.DiskGB > 0)
 }
 
 func add(a, b provider.Resources) provider.Resources {
-	return provider.Resources{CPUCore: a.CPUCore + b.CPUCore, RAMGB: a.RAMGB + b.RAMGB, DiskGB: a.DiskGB + b.DiskGB}
+	return provider.Resources{CPUMillis: a.CPUMillis + b.CPUMillis, RAMMB: a.RAMMB + b.RAMMB, DiskGB: a.DiskGB + b.DiskGB}
 }
 
 func sub(a, b provider.Resources) provider.Resources {
-	return provider.Resources{CPUCore: a.CPUCore - b.CPUCore, RAMGB: a.RAMGB - b.RAMGB, DiskGB: a.DiskGB - b.DiskGB}
+	return provider.Resources{CPUMillis: a.CPUMillis - b.CPUMillis, RAMMB: a.RAMMB - b.RAMMB, DiskGB: a.DiskGB - b.DiskGB}
 }

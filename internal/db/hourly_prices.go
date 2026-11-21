@@ -21,7 +21,7 @@ func SetHourlyPrices(ctx context.Context, q DBTX, p provider.Type, prices provid
 			cpu_cores = EXCLUDED.cpu_cores,
 			ram_gb    = EXCLUDED.ram_gb,
 			disk_gb   = EXCLUDED.disk_gb`,
-		uuid.New(), p, prices.CPUCore, prices.RAMGB, prices.DiskGB,
+		uuid.New(), p, prices.PerCPUCore, prices.PerRAMGB, prices.PerDiskGB,
 	)
 	if err != nil {
 		return fmt.Errorf("set hourly prices %s: %w", p, err)
@@ -34,7 +34,7 @@ func GetHourlyPrices(ctx context.Context, q DBTX, p provider.Type) (provider.Pri
 	err := q.QueryRow(ctx, `
 		SELECT cpu_cores, ram_gb, disk_gb
 		FROM hourly_prices WHERE provider = $1`, p,
-	).Scan(&prices.CPUCore, &prices.RAMGB, &prices.DiskGB)
+	).Scan(&prices.PerCPUCore, &prices.PerRAMGB, &prices.PerDiskGB)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return provider.Prices{}, fmt.Errorf("get hourly prices %s: %w", p, ErrPricesNotFound)

@@ -16,7 +16,7 @@ import (
 
 func TestListEnvsOnlyShowsCallerEnvironments(t *testing.T) {
 	s := newServer(t)
-	owner := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
+	owner := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 	created := s.createEnv(t, owner)
 
 	for _, tc := range []struct {
@@ -97,7 +97,7 @@ func (s server) list(t *testing.T, key, query string) *httptest.ResponseRecorder
 
 func TestListEnvsPaginationAndFilter(t *testing.T) {
 	s := newServer(t)
-	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 30, DiskGB: 100})
+	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 30720, DiskGB: 100})
 	var ids []uuid.UUID
 	for range 3 {
 		ids = append(ids, s.createEnv(t, key).ID)
@@ -161,7 +161,7 @@ func TestListEnvsPaginationAndFilter(t *testing.T) {
 
 func TestListEnvsBadParams(t *testing.T) {
 	s := newServer(t)
-	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
+	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 
 	for query, want := range map[string]string{
 		"?status=STOPPED": "status",

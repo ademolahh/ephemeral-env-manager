@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	defaultQuota        = provider.Resources{CPUCore: 4, RAMGB: 16, DiskGB: 50}
+	defaultQuota        = provider.Resources{CPUMillis: 4000, RAMMB: 16384, DiskGB: 50}
 	defaultCostBudget   = int64(10000)
 	defaultBudgetPeriod = 30 * 24 * time.Hour
 )
@@ -179,7 +179,7 @@ func (r setBudgetRequest) validate(now time.Time) error {
 		return errors.New("quota, cost_budget_total and budget_expires_at are required")
 	}
 
-	if r.Quota.CPUCore < 0 || r.Quota.RAMGB < 0 || r.Quota.DiskGB < 0 {
+	if r.Quota.CPUMillis < 0 || r.Quota.RAMMB < 0 || r.Quota.DiskGB < 0 {
 		return errors.New("quota must not be negative")
 	}
 

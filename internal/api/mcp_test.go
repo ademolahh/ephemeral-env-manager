@@ -131,13 +131,13 @@ func TestMCPEnvironmentLifecycle(t *testing.T) {
 		"type":      "REGULAR_TESTING",
 		"workload":  "img:tag",
 		"template":  "clear-dashboard@v1",
-		"resources": map[string]any{"workload": map[string]any{"ram_gb": 8}},
+		"resources": map[string]any{"workload": map[string]any{"ram_mb": 8192}},
 	}, &created)
 	if res.IsError {
 		t.Fatalf("create_environment error: %s", toolText(res))
 	}
-	if created.TemplateName != "clear-dashboard" || created.Resources.RAMGB != 13 {
-		t.Errorf("created = %s@%s %+v, want clear-dashboard with 13 ram", created.TemplateName, created.TemplateVersion, created.Resources)
+	if created.TemplateName != "clear-dashboard" || created.Resources.RAMMB != 13312 {
+		t.Errorf("created = %s@%s %+v, want clear-dashboard with 13312 MiB ram", created.TemplateName, created.TemplateVersion, created.Resources)
 	}
 
 	var got db.Environment
@@ -218,7 +218,7 @@ func TestMCPToolErrors(t *testing.T) {
 		want string
 	}{
 		{name: "unknown template", tool: "create_environment", args: map[string]any{"type": "REGULAR_TESTING", "workload": "img", "template": "nope@v1"}, want: "template nope@v1 not found"},
-		{name: "unknown service override", tool: "create_environment", args: map[string]any{"type": "REGULAR_TESTING", "workload": "img", "template": "clear-dashboard@v1", "resources": map[string]any{"services": map[string]any{"mysql": map[string]any{"cpu_core": 1}}}}, want: "not in the template"},
+		{name: "unknown service override", tool: "create_environment", args: map[string]any{"type": "REGULAR_TESTING", "workload": "img", "template": "clear-dashboard@v1", "resources": map[string]any{"services": map[string]any{"mysql": map[string]any{"cpu_millis": 1000}}}}, want: "not in the template"},
 		{name: "invalid id", tool: "get_environment", args: map[string]any{"id": "nope"}, want: "invalid environment id"},
 		{name: "other caller's env", tool: "get_environment", args: map[string]any{"id": other.ID.String()}, want: "not found"},
 		{name: "delete other caller's env", tool: "delete_environment", args: map[string]any{"id": other.ID.String()}, want: "not found"},

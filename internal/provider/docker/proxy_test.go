@@ -56,7 +56,7 @@ func routedTemplate() provider.Template {
 	return provider.Template{
 		Workload: provider.Workload{
 			Ports:     []int{6379, 6380},
-			Resources: provider.Resources{CPUCore: 1, RAMGB: 1},
+			Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024},
 		},
 	}
 }
@@ -101,12 +101,12 @@ func TestAddressRoutesToSharedAlias(t *testing.T) {
 	ctx := context.Background()
 	id := newEnvID(t, d)
 
-	node := provider.Service{Image: testImage, Resources: provider.Resources{CPUCore: 1, RAMGB: 1}, Aliases: []string{"keel"}}
+	node := provider.Service{Image: testImage, Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}, Aliases: []string{"keel"}}
 	first, second := node, node
 	first.Name, second.Name = "keel-1", "keel-2"
 	tpl := provider.Template{
-		Workload: provider.Workload{Ports: []int{6379}, Resources: provider.Resources{CPUCore: 1, RAMGB: 1}, Aliases: []string{"keel"}},
-		Services: []provider.Service{first, second, {Name: "cache", Image: testImage, Resources: provider.Resources{CPUCore: 1, RAMGB: 1}}},
+		Workload: provider.Workload{Ports: []int{6379}, Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}, Aliases: []string{"keel"}},
+		Services: []provider.Service{first, second, {Name: "cache", Image: testImage, Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}}},
 	}
 	if _, err := d.Create(ctx, id, testImage, tpl); err != nil {
 		t.Fatalf("Create() error = %v", err)

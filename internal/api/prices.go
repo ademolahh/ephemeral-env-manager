@@ -9,9 +9,9 @@ import (
 )
 
 type setPricesRequest struct {
-	CPUCore *int64 `json:"cpu_core"`
-	RAMGB   *int64 `json:"ram_gb"`
-	DiskGB  *int64 `json:"disk_gb"`
+	PerCPUCore *int64 `json:"per_cpu_core"`
+	PerRAMGB   *int64 `json:"per_ram_gb"`
+	PerDiskGB  *int64 `json:"per_disk_gb"`
 }
 
 func (h *Handler) SetPrices(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +30,7 @@ func (h *Handler) SetPrices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prices := provider.Prices{CPUCore: *req.CPUCore, RAMGB: *req.RAMGB, DiskGB: *req.DiskGB}
+	prices := provider.Prices{PerCPUCore: *req.PerCPUCore, PerRAMGB: *req.PerRAMGB, PerDiskGB: *req.PerDiskGB}
 	if err := db.SetHourlyPrices(r.Context(), h.db, p, prices); err != nil {
 		writeServiceError(w, "set prices", err)
 		return
@@ -40,11 +40,11 @@ func (h *Handler) SetPrices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (r setPricesRequest) validate() error {
-	if r.CPUCore == nil || r.RAMGB == nil || r.DiskGB == nil {
-		return errors.New("cpu_core, ram_gb and disk_gb are required")
+	if r.PerCPUCore == nil || r.PerRAMGB == nil || r.PerDiskGB == nil {
+		return errors.New("per_cpu_core, per_ram_gb and per_disk_gb are required")
 	}
 
-	if *r.CPUCore < 0 || *r.RAMGB < 0 || *r.DiskGB < 0 {
+	if *r.PerCPUCore < 0 || *r.PerRAMGB < 0 || *r.PerDiskGB < 0 {
 		return errors.New("prices must not be negative")
 	}
 

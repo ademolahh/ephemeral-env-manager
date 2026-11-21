@@ -387,7 +387,7 @@ func TestListAPIKeys(t *testing.T) {
 		t.Fatalf("age key: %v", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO environments (id, expires_at, type, provider, cpu_cores, ram_gb, disk_gb, hourly_rate,
+		INSERT INTO environments (id, expires_at, type, provider, cpu_millis, ram_mb, disk_gb, hourly_rate,
 			caller_id, api_key_id, template_name, template_version, estimated_cost, reserved_cost, charged_cost)
 		VALUES
 			(gen_random_uuid(), now(), 'PR_REVIEW', 'docker', 1, 1, 1, 1, $1, $2, 't', 'v1', 100, 100, NULL),

@@ -31,8 +31,8 @@ func main() {
 	if os.Getenv("DATABASE_URL") == "" {
 		log.Fatal("DATABASE_URL is required")
 	}
-	prices := provider.Prices{CPUCore: *cpuPrice, RAMGB: *ramPrice, DiskGB: *diskPrice}
-	capacity := provider.Resources{CPUCore: *cpu, RAMGB: *ram, DiskGB: *disk}
+	prices := provider.Prices{PerCPUCore: *cpuPrice, PerRAMGB: *ramPrice, PerDiskGB: *diskPrice}
+	capacity := provider.Resources{CPUMillis: *cpu * 1000, RAMMB: *ram * 1024, DiskGB: *disk}
 
 	ctx := context.Background()
 	pool, err := db.New(ctx, os.Getenv("DATABASE_URL"))

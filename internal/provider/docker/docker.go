@@ -26,7 +26,7 @@ const (
 	nodeLabel = "eem.node"
 )
 
-var ErrUnlimitedResources = errors.New("cpu and ram limits must be at least 1, docker treats 0 as unlimited")
+var ErrUnlimitedResources = errors.New("cpu and ram limits are below the minimum, and docker treats 0 as unlimited")
 
 type Docker struct {
 	cli   *client.Client
@@ -266,8 +266,8 @@ func (d *Docker) create(ctx context.Context, id, workload string, temp provider.
 }
 
 func (d *Docker) run(ctx context.Context, name, net string, aliases []string, cfg *container.Config, res provider.Resources) (string, error) {
-	if res.CPUCore < 1 || res.RAMGB < 1 {
-		return "", fmt.Errorf("%w: cpu_core %d, ram_gb %d", ErrUnlimitedResources, res.CPUCore, res.RAMGB)
+	if res.CPUMillis < provider.MinCPUMillis || res.RAMMB < provider.MinRAMMB {
+		return "", fmt.Errorf("%w: cpu_millis %d (min %d), ram_mb %d (min %d)", ErrUnlimitedResources, res.CPUMillis, provider.MinCPUMillis, res.RAMMB, provider.MinRAMMB)
 	}
 
 	if err := d.ensureImage(ctx, cfg.Image); err != nil {
@@ -279,8 +279,8 @@ func (d *Docker) run(ctx context.Context, name, net string, aliases []string, cf
 		Config: cfg,
 		HostConfig: &container.HostConfig{
 			NetworkMode: container.NetworkMode(net),
-			NanoCPUs:    int64(res.CPUCore) * 1e9,
-			Memory:      int64(res.RAMGB) << 30,
+			NanoCPUs:    int64(res.CPUMillis) * 1e6,
+			Memory:      int64(res.RAMMB) << 20,
 		},
 		NetworkingConfig: &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{

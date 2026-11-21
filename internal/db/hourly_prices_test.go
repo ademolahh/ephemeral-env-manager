@@ -36,10 +36,10 @@ func getPrices(t *testing.T, tx pgx.Tx, p provider.Type) pricesRow {
 
 func checkPrices(t *testing.T, got pricesRow, want provider.Prices) {
 	t.Helper()
-	if got.CPU != want.CPUCore || got.RAM != want.RAMGB || got.Disk != want.DiskGB {
+	if got.CPU != want.PerCPUCore || got.RAM != want.PerRAMGB || got.Disk != want.PerDiskGB {
 		t.Errorf("prices = %d/%d/%d, want %d/%d/%d",
 			got.CPU, got.RAM, got.Disk,
-			want.CPUCore, want.RAMGB, want.DiskGB)
+			want.PerCPUCore, want.PerRAMGB, want.PerDiskGB)
 	}
 	if got.Copies != 1 {
 		t.Errorf("rows = %d, want 1", got.Copies)
@@ -47,9 +47,9 @@ func checkPrices(t *testing.T, got pricesRow, want provider.Prices) {
 }
 
 var dockerPrices = provider.Prices{
-	CPUCore: 4048,
-	RAMGB:   4445,
-	DiskGB:  110,
+	PerCPUCore: 4048,
+	PerRAMGB:   4445,
+	PerDiskGB:  110,
 }
 
 func TestSetHourlyPricesInsert(t *testing.T) {
@@ -72,9 +72,9 @@ func TestSetHourlyPricesUpdate(t *testing.T) {
 	before := getPrices(t, tx, provider.Docker)
 
 	updated := provider.Prices{
-		CPUCore: 10000,
-		RAMGB:   0,
-		DiskGB:  123,
+		PerCPUCore: 10000,
+		PerRAMGB:   0,
+		PerDiskGB:  123,
 	}
 	if err := SetHourlyPrices(ctx, tx, provider.Docker, updated); err != nil {
 		t.Fatalf("SetHourlyPrices() error = %v", err)
@@ -91,9 +91,9 @@ func TestSetHourlyPricesProvidersIndependent(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
 	cloudPrices := provider.Prices{
-		CPUCore: 41600,
-		RAMGB:   5200,
-		DiskGB:  100,
+		PerCPUCore: 41600,
+		PerRAMGB:   5200,
+		PerDiskGB:  100,
 	}
 
 	if err := SetHourlyPrices(ctx, tx, provider.Docker, dockerPrices); err != nil {
@@ -117,19 +117,19 @@ func TestSetHourlyPricesErrors(t *testing.T) {
 		{
 			name:     "negative cpu",
 			provider: provider.Docker,
-			prices:   provider.Prices{CPUCore: -1},
+			prices:   provider.Prices{PerCPUCore: -1},
 			code:     "23514",
 		},
 		{
 			name:     "negative ram",
 			provider: provider.Docker,
-			prices:   provider.Prices{RAMGB: -1},
+			prices:   provider.Prices{PerRAMGB: -1},
 			code:     "23514",
 		},
 		{
 			name:     "negative disk",
 			provider: provider.Docker,
-			prices:   provider.Prices{DiskGB: -1},
+			prices:   provider.Prices{PerDiskGB: -1},
 			code:     "23514",
 		},
 		{

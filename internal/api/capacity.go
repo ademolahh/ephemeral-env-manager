@@ -89,8 +89,8 @@ func (r setCapacityRequest) validate() error {
 		return errors.New("total is required")
 	}
 
-	if r.Total.CPUCore < 1 || r.Total.RAMGB < 1 || r.Total.DiskGB < 1 {
-		return errors.New("total cpu_core, ram_gb and disk_gb must be positive")
+	if r.Total.CPUMillis < 1 || r.Total.RAMMB < 1 || r.Total.DiskGB < 1 {
+		return errors.New("total cpu_millis, ram_mb and disk_gb must be positive")
 	}
 
 	return nil

@@ -14,7 +14,7 @@ func createExecEnv(t *testing.T, d *Docker) string {
 	t.Helper()
 	id := newEnvID(t, d)
 	if _, err := d.Create(context.Background(), id, testImage, provider.Template{
-		Workload: provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
+		Workload: provider.Workload{Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}},
 	}); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}

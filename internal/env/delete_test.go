@@ -37,7 +37,7 @@ func otherCaller(t *testing.T, q db.DBTX, role db.Role) db.AuthenticatedCaller {
 	t.Helper()
 	id, err := db.CreateCaller(context.Background(), q, db.NewCaller{
 		PermittedEnv:    db.EnvProdBug,
-		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
+		Quota:           provider.Resources{CPUMillis: 8000, RAMMB: 32768, DiskGB: 100},
 		CostBudgetTotal: 1000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
@@ -228,7 +228,7 @@ func TestDeleteWhileProvisioning(t *testing.T) {
 	if err := db.SetHourlyPrices(ctx, pool, provider.Docker, dockerPrices); err != nil {
 		t.Fatalf("SetHourlyPrices() error = %v", err)
 	}
-	if err := db.SetCapacityPool(ctx, pool, provider.Docker, provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000}); err != nil {
+	if err := db.SetCapacityPool(ctx, pool, provider.Docker, provider.Resources{CPUMillis: 100000, RAMMB: 102400, DiskGB: 1000}); err != nil {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
 	caller := otherCaller(t, pool, db.RoleUser)

@@ -50,10 +50,10 @@ type CallerBudget struct {
 func GetCallerBudget(ctx context.Context, q DBTX, id uuid.UUID) (CallerBudget, error) {
 	var b CallerBudget
 	err := q.QueryRow(ctx, `
-	SELECT quota_cpu_cores, quota_ram_gb, quota_disk_gb,
+	SELECT quota_cpu_millis, quota_ram_mb, quota_disk_gb,
 			cost_budget_total, cost_used, prod_bug_cost, prod_bug_cost_cap, budget_set_at, budget_expires_at
 		FROM callers WHERE id = $1`, id,
-	).Scan(&b.Quota.CPUCore, &b.Quota.RAMGB, &b.Quota.DiskGB,
+	).Scan(&b.Quota.CPUMillis, &b.Quota.RAMMB, &b.Quota.DiskGB,
 		&b.CostBudgetTotal, &b.CostUsed, &b.ProdBugCost, &b.ProdBugCostCap, &b.BudgetSetAt, &b.BudgetExpiresAt)
 
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -71,13 +71,13 @@ func CreateCaller(ctx context.Context, q DBTX, c NewCaller) (uuid.UUID, error) {
 	tag, err := q.Exec(ctx, `
 		INSERT INTO callers (
 			id, github_login, github_id,
-			quota_cpu_cores, quota_ram_gb, quota_disk_gb,
+			quota_cpu_millis, quota_ram_mb, quota_disk_gb,
 			cost_budget_total, budget_expires_at, permitted_env
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (github_id) DO NOTHING`,
 		id, c.GithubLogin, c.GithubID,
-		c.Quota.CPUCore, c.Quota.RAMGB, c.Quota.DiskGB,
+		c.Quota.CPUMillis, c.Quota.RAMMB, c.Quota.DiskGB,
 		c.CostBudgetTotal, c.BudgetExpiresAt, c.PermittedEnv,
 	)
 	if err != nil {
@@ -98,14 +98,14 @@ func UpsertGithubCaller(ctx context.Context, q DBTX, c NewCaller) (uuid.UUID, er
 	err := q.QueryRow(ctx, `
 		INSERT INTO callers (
 			id, github_login, github_id,
-			quota_cpu_cores, quota_ram_gb, quota_disk_gb,
+			quota_cpu_millis, quota_ram_mb, quota_disk_gb,
 			cost_budget_total, budget_expires_at, permitted_env
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (github_id) DO UPDATE SET github_login = EXCLUDED.github_login
 		RETURNING id`,
 		uuid.New(), c.GithubLogin, c.GithubID,
-		c.Quota.CPUCore, c.Quota.RAMGB, c.Quota.DiskGB,
+		c.Quota.CPUMillis, c.Quota.RAMMB, c.Quota.DiskGB,
 		c.CostBudgetTotal, c.BudgetExpiresAt, c.PermittedEnv,
 	).Scan(&id)
 	if err != nil {
@@ -146,14 +146,14 @@ func GetCaller(ctx context.Context, q DBTX, id uuid.UUID) (Caller, error) {
 func SetCallerBudget(ctx context.Context, q DBTX, id uuid.UUID, quota provider.Resources, costBudget int64, expiresAt time.Time) error {
 	tag, err := q.Exec(ctx, `
 		UPDATE callers SET
-			quota_cpu_cores   = $2,
-			quota_ram_gb      = $3,
+			quota_cpu_millis   = $2,
+			quota_ram_mb      = $3,
 			quota_disk_gb     = $4,
 			cost_budget_total = $5,
 			budget_expires_at = $6,
 			budget_set_at     = now()
 		WHERE id = $1`,
-		id, quota.CPUCore, quota.RAMGB, quota.DiskGB, costBudget, expiresAt,
+		id, quota.CPUMillis, quota.RAMMB, quota.DiskGB, costBudget, expiresAt,
 	)
 	if err != nil {
 		return fmt.Errorf("set caller budget %s: %w", id, err)
@@ -201,13 +201,13 @@ func SetCallerGithub(ctx context.Context, q DBTX, id uuid.UUID, githubLogin, git
 func LockCaller(ctx context.Context, q DBTX, id uuid.UUID) (CallerLimits, error) {
 	var c CallerLimits
 	err := q.QueryRow(ctx, `
-		SELECT permitted_env, quota_cpu_cores, quota_ram_gb, quota_disk_gb,
+		SELECT permitted_env, quota_cpu_millis, quota_ram_mb, quota_disk_gb,
 			cost_budget_total, cost_used, prod_bug_cost, prod_bug_cost_cap,
 			budget_set_at, budget_expires_at <= now()
 		FROM callers WHERE id = $1
 		FOR UPDATE`, id,
 	).Scan(
-		&c.PermittedEnv, &c.Quota.CPUCore, &c.Quota.RAMGB, &c.Quota.DiskGB,
+		&c.PermittedEnv, &c.Quota.CPUMillis, &c.Quota.RAMMB, &c.Quota.DiskGB,
 		&c.CostBudgetTotal, &c.CostUsed, &c.ProdBugCost, &c.ProdBugCostCap,
 		&c.BudgetSetAt, &c.BudgetExpired,
 	)

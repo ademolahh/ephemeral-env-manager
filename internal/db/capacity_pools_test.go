@@ -23,13 +23,13 @@ func getPool(t *testing.T, tx pgx.Tx, p provider.Type) poolRow {
 	var r poolRow
 	err := tx.QueryRow(context.Background(), `
 		SELECT id,
-			default_cpu_cores, default_ram_gb, default_disk_gb,
-			available_cpu_cores, available_ram_gb, available_disk_gb
+			default_cpu_millis, default_ram_mb, default_disk_gb,
+			available_cpu_millis, available_ram_mb, available_disk_gb
 		FROM capacity_pools WHERE provider = $1`, p,
 	).Scan(
 		&r.ID,
-		&r.Default.CPUCore, &r.Default.RAMGB, &r.Default.DiskGB,
-		&r.Available.CPUCore, &r.Available.RAMGB, &r.Available.DiskGB,
+		&r.Default.CPUMillis, &r.Default.RAMMB, &r.Default.DiskGB,
+		&r.Available.CPUMillis, &r.Available.RAMMB, &r.Available.DiskGB,
 	)
 	if err != nil {
 		t.Fatalf("get pool %s: %v", p, err)
@@ -41,11 +41,11 @@ func allocate(t *testing.T, tx pgx.Tx, p provider.Type, r provider.Resources) {
 	t.Helper()
 	_, err := tx.Exec(context.Background(), `
 		UPDATE capacity_pools SET
-			available_cpu_cores = available_cpu_cores - $2,
-			available_ram_gb    = available_ram_gb - $3,
+			available_cpu_millis = available_cpu_millis - $2,
+			available_ram_mb    = available_ram_mb - $3,
 			available_disk_gb   = available_disk_gb - $4
 		WHERE provider = $1`,
-		p, r.CPUCore, r.RAMGB, r.DiskGB,
+		p, r.CPUMillis, r.RAMMB, r.DiskGB,
 	)
 	if err != nil {
 		t.Fatalf("allocate %+v from %s: %v", r, p, err)
@@ -54,7 +54,7 @@ func allocate(t *testing.T, tx pgx.Tx, p provider.Type, r provider.Resources) {
 
 func TestSetCapacityPoolInsert(t *testing.T) {
 	tx := testTx(t)
-	total := provider.Resources{CPUCore: 16, RAMGB: 64, DiskGB: 500}
+	total := provider.Resources{CPUMillis: 16000, RAMMB: 65536, DiskGB: 500}
 
 	if err := SetCapacityPool(context.Background(), tx, provider.Docker, total); err != nil {
 		t.Fatalf("SetCapacityPool() error = %v", err)
@@ -70,8 +70,8 @@ func TestSetCapacityPoolInsert(t *testing.T) {
 }
 
 func TestSetCapacityPoolUpdate(t *testing.T) {
-	initial := provider.Resources{CPUCore: 16, RAMGB: 64, DiskGB: 500}
-	used := provider.Resources{CPUCore: 4, RAMGB: 16, DiskGB: 100}
+	initial := provider.Resources{CPUMillis: 16000, RAMMB: 65536, DiskGB: 500}
+	used := provider.Resources{CPUMillis: 4000, RAMMB: 16384, DiskGB: 100}
 
 	tests := []struct {
 		name          string
@@ -86,31 +86,31 @@ func TestSetCapacityPoolUpdate(t *testing.T) {
 		},
 		{
 			name:          "grow idle",
-			total:         provider.Resources{CPUCore: 32, RAMGB: 128, DiskGB: 1000},
-			wantAvailable: provider.Resources{CPUCore: 32, RAMGB: 128, DiskGB: 1000},
+			total:         provider.Resources{CPUMillis: 32000, RAMMB: 131072, DiskGB: 1000},
+			wantAvailable: provider.Resources{CPUMillis: 32000, RAMMB: 131072, DiskGB: 1000},
 		},
 		{
 			name:          "shrink idle",
-			total:         provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 250},
-			wantAvailable: provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 250},
+			total:         provider.Resources{CPUMillis: 8000, RAMMB: 32768, DiskGB: 250},
+			wantAvailable: provider.Resources{CPUMillis: 8000, RAMMB: 32768, DiskGB: 250},
 		},
 		{
 			name:          "same total in use",
 			used:          used,
 			total:         initial,
-			wantAvailable: provider.Resources{CPUCore: 12, RAMGB: 48, DiskGB: 400},
+			wantAvailable: provider.Resources{CPUMillis: 12000, RAMMB: 49152, DiskGB: 400},
 		},
 		{
 			name:          "grow in use",
 			used:          used,
-			total:         provider.Resources{CPUCore: 20, RAMGB: 80, DiskGB: 600},
-			wantAvailable: provider.Resources{CPUCore: 16, RAMGB: 64, DiskGB: 500},
+			total:         provider.Resources{CPUMillis: 20000, RAMMB: 81920, DiskGB: 600},
+			wantAvailable: provider.Resources{CPUMillis: 16000, RAMMB: 65536, DiskGB: 500},
 		},
 		{
 			name:          "shrink in use",
 			used:          used,
-			total:         provider.Resources{CPUCore: 10, RAMGB: 40, DiskGB: 300},
-			wantAvailable: provider.Resources{CPUCore: 6, RAMGB: 24, DiskGB: 200},
+			total:         provider.Resources{CPUMillis: 10000, RAMMB: 40960, DiskGB: 300},
+			wantAvailable: provider.Resources{CPUMillis: 6000, RAMMB: 24576, DiskGB: 200},
 		},
 		{
 			name:          "shrink to usage",
@@ -153,12 +153,12 @@ func TestSetCapacityPoolShrinkBelowUsage(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
 
-	if err := SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUCore: 16, RAMGB: 64, DiskGB: 500}); err != nil {
+	if err := SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUMillis: 16000, RAMMB: 65536, DiskGB: 500}); err != nil {
 		t.Fatalf("SetCapacityPool() initial error = %v", err)
 	}
-	allocate(t, tx, provider.Docker, provider.Resources{CPUCore: 10})
+	allocate(t, tx, provider.Docker, provider.Resources{CPUMillis: 10000})
 
-	err := SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUCore: 8, RAMGB: 64, DiskGB: 500})
+	err := SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUMillis: 8000, RAMMB: 65536, DiskGB: 500})
 	if !errors.Is(err, ErrCapacityBelowUsage) {
 		t.Fatalf("SetCapacityPool() error = %v, want %v", err, ErrCapacityBelowUsage)
 	}
@@ -167,24 +167,24 @@ func TestSetCapacityPoolShrinkBelowUsage(t *testing.T) {
 	}
 
 	got := getPool(t, tx, provider.Docker)
-	if want := (provider.Resources{CPUCore: 16, RAMGB: 64, DiskGB: 500}); got.Default != want {
+	if want := (provider.Resources{CPUMillis: 16000, RAMMB: 65536, DiskGB: 500}); got.Default != want {
 		t.Errorf("default = %+v, want unchanged %+v", got.Default, want)
 	}
-	if want := (provider.Resources{CPUCore: 6, RAMGB: 64, DiskGB: 500}); got.Available != want {
+	if want := (provider.Resources{CPUMillis: 6000, RAMMB: 65536, DiskGB: 500}); got.Available != want {
 		t.Errorf("available = %+v, want unchanged %+v", got.Available, want)
 	}
 
-	if err := SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUCore: 10, RAMGB: 64, DiskGB: 500}); err != nil {
+	if err := SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUMillis: 10000, RAMMB: 65536, DiskGB: 500}); err != nil {
 		t.Fatalf("SetCapacityPool() down to usage error = %v", err)
 	}
-	if got := getPool(t, tx, provider.Docker).Available.CPUCore; got != 0 {
+	if got := getPool(t, tx, provider.Docker).Available.CPUMillis; got != 0 {
 		t.Errorf("available cpu = %d, want 0 when total equals usage", got)
 	}
 }
 
 func TestSetCapacityPoolNegative(t *testing.T) {
 	tx := testTx(t)
-	err := SetCapacityPool(context.Background(), tx, provider.Docker, provider.Resources{CPUCore: -1})
+	err := SetCapacityPool(context.Background(), tx, provider.Docker, provider.Resources{CPUMillis: -1000})
 	if got := pgCode(err); got != "23514" {
 		t.Errorf("SetCapacityPool() error = %v, want check violation", err)
 	}
@@ -192,7 +192,7 @@ func TestSetCapacityPoolNegative(t *testing.T) {
 
 func TestSetCapacityPoolInvalidProvider(t *testing.T) {
 	tx := testTx(t)
-	err := SetCapacityPool(context.Background(), tx, "aws", provider.Resources{CPUCore: 1})
+	err := SetCapacityPool(context.Background(), tx, "aws", provider.Resources{CPUMillis: 1000})
 	if got := pgCode(err); got != "22P02" {
 		t.Errorf("SetCapacityPool() error = %v, want invalid enum value", err)
 	}
@@ -201,8 +201,8 @@ func TestSetCapacityPoolInvalidProvider(t *testing.T) {
 func TestSetCapacityPoolProvidersIndependent(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
-	docker := provider.Resources{CPUCore: 16, RAMGB: 64, DiskGB: 500}
-	cloud := provider.Resources{CPUCore: 64, RAMGB: 256, DiskGB: 2000}
+	docker := provider.Resources{CPUMillis: 16000, RAMMB: 65536, DiskGB: 500}
+	cloud := provider.Resources{CPUMillis: 64000, RAMMB: 262144, DiskGB: 2000}
 
 	if err := SetCapacityPool(ctx, tx, provider.Docker, docker); err != nil {
 		t.Fatalf("SetCapacityPool(docker) error = %v", err)

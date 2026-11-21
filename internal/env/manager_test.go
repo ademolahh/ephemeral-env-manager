@@ -103,9 +103,9 @@ func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (strin
 func (f *fakeProvider) List(ctx context.Context) ([]string, error) { return nil, nil }
 
 var dockerPrices = provider.Prices{
-	CPUCore: 4048,
-	RAMGB:   4445,
-	DiskGB:  110,
+	PerCPUCore: 4048,
+	PerRAMGB:   4445,
+	PerDiskGB:  110,
 }
 
 var dashboard = provider.Template{
@@ -114,10 +114,10 @@ var dashboard = provider.Template{
 	Providers:       []provider.Type{provider.Docker, provider.Cloud},
 	DefaultProvider: provider.Docker,
 	TTL:             4 * time.Hour,
-	Workload:        provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 4, DiskGB: 10}},
+	Workload:        provider.Workload{Resources: provider.Resources{CPUMillis: 1000, RAMMB: 4096, DiskGB: 10}},
 	Services: []provider.Service{
-		{Name: "postgres", Image: "postgres:18", Resources: provider.Resources{CPUCore: 1, RAMGB: 4, DiskGB: 10}},
-		{Name: "redis", Image: "redis:8", Resources: provider.Resources{CPUCore: 1, RAMGB: 1, DiskGB: 2}},
+		{Name: "postgres", Image: "postgres:18", Resources: provider.Resources{CPUMillis: 1000, RAMMB: 4096, DiskGB: 10}},
+		{Name: "redis", Image: "redis:8", Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024, DiskGB: 2}},
 	},
 }
 
@@ -128,12 +128,12 @@ func setup(t *testing.T) (pgx.Tx, uuid.UUID) {
 	if err := db.SetHourlyPrices(ctx, tx, provider.Docker, dockerPrices); err != nil {
 		t.Fatalf("SetHourlyPrices() error = %v", err)
 	}
-	if err := db.SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000}); err != nil {
+	if err := db.SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUMillis: 100000, RAMMB: 102400, DiskGB: 1000}); err != nil {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
 	callerID, err := db.CreateCaller(ctx, tx, db.NewCaller{
 		PermittedEnv:    db.EnvRegularTesting,
-		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
+		Quota:           provider.Resources{CPUMillis: 8000, RAMMB: 32768, DiskGB: 100},
 		CostBudgetTotal: 1000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
@@ -212,7 +212,7 @@ func TestCreate(t *testing.T) {
 	if env.CallerID != callerID {
 		t.Errorf("caller_id = %s, want %s", env.CallerID, callerID)
 	}
-	if want := (provider.Resources{CPUCore: 3, RAMGB: 9, DiskGB: 22}); env.Resources != want {
+	if want := (provider.Resources{CPUMillis: 3000, RAMMB: 9216, DiskGB: 22}); env.Resources != want {
 		t.Errorf("resources = %+v, want %+v", env.Resources, want)
 	}
 	if want := dashboard.HourlyCost(dockerPrices); env.HourlyRate != want {
@@ -232,11 +232,11 @@ func TestCreate(t *testing.T) {
 func TestCreateExplicitProvider(t *testing.T) {
 	tx, callerID := setup(t)
 	ctx := context.Background()
-	cloudPrices := provider.Prices{CPUCore: 50000}
+	cloudPrices := provider.Prices{PerCPUCore: 50000}
 	if err := db.SetHourlyPrices(ctx, tx, provider.Cloud, cloudPrices); err != nil {
 		t.Fatalf("SetHourlyPrices() error = %v", err)
 	}
-	if err := db.SetCapacityPool(ctx, tx, provider.Cloud, provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000}); err != nil {
+	if err := db.SetCapacityPool(ctx, tx, provider.Cloud, provider.Resources{CPUMillis: 100000, RAMMB: 102400, DiskGB: 1000}); err != nil {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
 	docker := &fakeProvider{}
@@ -371,7 +371,7 @@ func TestCreateReturnsBeforeProvisioning(t *testing.T) {
 func TestCreateIdempotent(t *testing.T) {
 	tx, callerID := setup(t)
 	ctx := context.Background()
-	if err := db.SetCallerBudget(ctx, tx, callerID, provider.Resources{CPUCore: 100, RAMGB: 100, DiskGB: 1000}, 1000, time.Now().Add(24*time.Hour)); err != nil {
+	if err := db.SetCallerBudget(ctx, tx, callerID, provider.Resources{CPUMillis: 100000, RAMMB: 102400, DiskGB: 1000}, 1000, time.Now().Add(24*time.Hour)); err != nil {
 		t.Fatalf("SetCallerBudget() error = %v", err)
 	}
 	fake := &fakeProvider{}
@@ -440,7 +440,7 @@ func TestCreateIdempotencyKeyPerCaller(t *testing.T) {
 	ctx := context.Background()
 	bob, err := db.CreateCaller(ctx, tx, db.NewCaller{
 		PermittedEnv:    db.EnvRegularTesting,
-		Quota:           provider.Resources{CPUCore: 8, RAMGB: 32, DiskGB: 100},
+		Quota:           provider.Resources{CPUMillis: 8000, RAMMB: 32768, DiskGB: 100},
 		CostBudgetTotal: 1000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})

@@ -77,7 +77,7 @@ func TestCreate(t *testing.T) {
 	tpl := provider.Template{
 		Workload: provider.Workload{
 			Ports:       []int{6379},
-			Resources:   provider.Resources{CPUCore: 1, RAMGB: 1, DiskGB: 1},
+			Resources:   provider.Resources{CPUMillis: 1000, RAMMB: 1024, DiskGB: 1},
 			Env:         map[string]string{"APP_ENV": "test", "CACHE_URL": "redis://cache:6379"},
 			Healthcheck: "redis-cli ping",
 		},
@@ -85,7 +85,7 @@ func TestCreate(t *testing.T) {
 			{
 				Name:        "cache",
 				Image:       testImage,
-				Resources:   provider.Resources{CPUCore: 1, RAMGB: 2, DiskGB: 1},
+				Resources:   provider.Resources{CPUMillis: 500, RAMMB: 256, DiskGB: 1},
 				Env:         map[string]string{"CACHE_MODE": "test"},
 				Healthcheck: "redis-cli ping",
 			},
@@ -140,8 +140,11 @@ func TestCreate(t *testing.T) {
 	if sc.Config.Labels[envLabel] != id {
 		t.Errorf("service label %s = %q, want %q", envLabel, sc.Config.Labels[envLabel], id)
 	}
-	if sc.HostConfig.Memory != 2<<30 {
-		t.Errorf("service Memory = %d, want %d", sc.HostConfig.Memory, 2<<30)
+	if sc.HostConfig.NanoCPUs != 5e8 {
+		t.Errorf("service NanoCPUs = %d, want %d", sc.HostConfig.NanoCPUs, int64(5e8))
+	}
+	if sc.HostConfig.Memory != 256<<20 {
+		t.Errorf("service Memory = %d, want %d", sc.HostConfig.Memory, 256<<20)
 	}
 	if !slices.Contains(sc.Config.Env, "CACHE_MODE=test") {
 		t.Errorf("service env missing CACHE_MODE=test")
@@ -188,7 +191,7 @@ func TestCreateNoServices(t *testing.T) {
 	id := newEnvID(t, d)
 
 	got, err := d.Create(ctx, id, testImage, provider.Template{
-		Workload: provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
+		Workload: provider.Workload{Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}},
 	})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -211,10 +214,10 @@ func TestCreateRollsBackOnFailure(t *testing.T) {
 	id := newEnvID(t, d)
 
 	got, err := d.Create(ctx, id, testImage, provider.Template{
-		Workload: provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
+		Workload: provider.Workload{Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}},
 		Services: []provider.Service{
-			{Name: "cache", Image: testImage, Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
-			{Name: "broken", Image: "eem.invalid/missing:never", Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
+			{Name: "cache", Image: testImage, Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}},
+			{Name: "broken", Image: "eem.invalid/missing:never", Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}},
 		},
 	})
 	if err == nil {
@@ -267,13 +270,13 @@ func TestCreateRejectsUnlimitedResources(t *testing.T) {
 	}{
 		{
 			name: "zero workload cpu",
-			tpl:  provider.Template{Workload: provider.Workload{Resources: provider.Resources{RAMGB: 1}}},
+			tpl:  provider.Template{Workload: provider.Workload{Resources: provider.Resources{RAMMB: 1024}}},
 		},
 		{
 			name: "zero service ram",
 			tpl: provider.Template{
-				Workload: provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
-				Services: []provider.Service{{Name: "cache", Image: testImage, Resources: provider.Resources{CPUCore: 1}}},
+				Workload: provider.Workload{Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}},
+				Services: []provider.Service{{Name: "cache", Image: testImage, Resources: provider.Resources{CPUMillis: 1000}}},
 			},
 		},
 	}
@@ -307,8 +310,8 @@ func TestDelete(t *testing.T) {
 	id := newEnvID(t, d)
 
 	if _, err := d.Create(ctx, id, testImage, provider.Template{
-		Workload: provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
-		Services: []provider.Service{{Name: "cache", Image: testImage, Resources: provider.Resources{CPUCore: 1, RAMGB: 1}}},
+		Workload: provider.Workload{Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}},
+		Services: []provider.Service{{Name: "cache", Image: testImage, Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}}},
 	}); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -346,7 +349,7 @@ func TestList(t *testing.T) {
 	networkOnly := newEnvID(t, d)
 
 	if _, err := d.Create(ctx, full, testImage, provider.Template{
-		Workload: provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
+		Workload: provider.Workload{Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}},
 	}); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -448,8 +451,8 @@ func TestStatus(t *testing.T) {
 	}
 
 	if _, err := d.Create(ctx, id, testImage, provider.Template{
-		Workload: provider.Workload{Resources: provider.Resources{CPUCore: 1, RAMGB: 1}},
-		Services: []provider.Service{{Name: "cache", Image: testImage, Resources: provider.Resources{CPUCore: 1, RAMGB: 1}, Healthcheck: "redis-cli ping"}},
+		Workload: provider.Workload{Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}},
+		Services: []provider.Service{{Name: "cache", Image: testImage, Resources: provider.Resources{CPUMillis: 1000, RAMMB: 1024}, Healthcheck: "redis-cli ping"}},
 	}); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}

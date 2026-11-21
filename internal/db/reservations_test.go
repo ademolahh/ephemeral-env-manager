@@ -77,7 +77,7 @@ func TestCallerUsage(t *testing.T) {
 	}
 
 	e := newEnvironment(callerID)
-	e.Resources = provider.Resources{CPUCore: 1, RAMGB: 2, DiskGB: 3}
+	e.Resources = provider.Resources{CPUMillis: 1000, RAMMB: 2048, DiskGB: 3}
 	createTestEnvironment(t, tx, e)
 	running := createTestEnvironment(t, tx, e)
 	forceStatus(t, tx, running, EnvRunning)
@@ -90,7 +90,7 @@ func TestCallerUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallerUsage() error = %v", err)
 	}
-	if want := (provider.Resources{CPUCore: 2, RAMGB: 4, DiskGB: 6}); usage != want {
+	if want := (provider.Resources{CPUMillis: 2000, RAMMB: 4096, DiskGB: 6}); usage != want {
 		t.Errorf("CallerUsage() = %+v, want %+v", usage, want)
 	}
 }
@@ -139,7 +139,7 @@ func TestListPreemptible(t *testing.T) {
 func TestLockCapacityPool(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
-	total := provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 30}
+	total := provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 30}
 	if err := SetCapacityPool(ctx, tx, provider.Docker, total); err != nil {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
@@ -160,32 +160,32 @@ func TestLockCapacityPool(t *testing.T) {
 func TestReserveCapacity(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
-	if err := SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 30}); err != nil {
+	if err := SetCapacityPool(ctx, tx, provider.Docker, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 30}); err != nil {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
 
-	if err := ReserveCapacity(ctx, tx, provider.Docker, provider.Resources{CPUCore: 1, RAMGB: 2, DiskGB: 3}); err != nil {
+	if err := ReserveCapacity(ctx, tx, provider.Docker, provider.Resources{CPUMillis: 1000, RAMMB: 2048, DiskGB: 3}); err != nil {
 		t.Fatalf("ReserveCapacity() error = %v", err)
 	}
-	if got, want := getPool(t, tx, provider.Docker).Available, (provider.Resources{CPUCore: 9, RAMGB: 18, DiskGB: 27}); got != want {
+	if got, want := getPool(t, tx, provider.Docker).Available, (provider.Resources{CPUMillis: 9000, RAMMB: 18432, DiskGB: 27}); got != want {
 		t.Errorf("available = %+v, want %+v", got, want)
 	}
 
-	if err := ReserveCapacity(ctx, tx, provider.Docker, provider.Resources{CPUCore: 10}); pgCode(err) != "23514" {
+	if err := ReserveCapacity(ctx, tx, provider.Docker, provider.Resources{CPUMillis: 10000}); pgCode(err) != "23514" {
 		t.Errorf("ReserveCapacity() beyond pool error = %v, want check violation", err)
 	}
 }
 
 func TestReserveCapacityNoPool(t *testing.T) {
 	tx := testTx(t)
-	if err := ReserveCapacity(context.Background(), tx, provider.Docker, provider.Resources{CPUCore: 1}); !errors.Is(err, ErrPoolNotFound) {
+	if err := ReserveCapacity(context.Background(), tx, provider.Docker, provider.Resources{CPUMillis: 1000}); !errors.Is(err, ErrPoolNotFound) {
 		t.Errorf("ReserveCapacity() error = %v, want ErrPoolNotFound", err)
 	}
 }
 
 func TestStatusChangeReleasesCapacity(t *testing.T) {
-	total := provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 30}
-	held := provider.Resources{CPUCore: 3, RAMGB: 9, DiskGB: 22}
+	total := provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 30}
+	held := provider.Resources{CPUMillis: 3000, RAMMB: 9216, DiskGB: 22}
 
 	tests := []struct {
 		name string
@@ -247,7 +247,7 @@ func TestStatusChangeReleasesCapacity(t *testing.T) {
 func TestStatusChangeRejectedKeepsCapacity(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
-	total := provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 30}
+	total := provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 30}
 	if err := SetCapacityPool(ctx, tx, provider.Docker, total); err != nil {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
@@ -266,7 +266,7 @@ func TestStatusChangeReleaseCappedAtDefault(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
 	id := createTestEnvironment(t, tx, newEnvironment(createTestCaller(t, tx, newCaller())))
-	total := provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 30}
+	total := provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 30}
 	if err := SetCapacityPool(ctx, tx, provider.Docker, total); err != nil {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
@@ -280,7 +280,7 @@ func TestStatusChangeReleaseCappedAtDefault(t *testing.T) {
 }
 
 func sub(a, b provider.Resources) provider.Resources {
-	return provider.Resources{CPUCore: a.CPUCore - b.CPUCore, RAMGB: a.RAMGB - b.RAMGB, DiskGB: a.DiskGB - b.DiskGB}
+	return provider.Resources{CPUMillis: a.CPUMillis - b.CPUMillis, RAMMB: a.RAMMB - b.RAMMB, DiskGB: a.DiskGB - b.DiskGB}
 }
 
 func TestEnvironmentByIdempotencyKey(t *testing.T) {

@@ -33,7 +33,7 @@ func waitForLock(t *testing.T, pool *pgxpool.Pool, pid uint32) {
 func TestReleaseDoesNotDeadlockWithPreemption(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
-	total := provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 30}
+	total := provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 30}
 	if err := SetCapacityPool(ctx, pool, provider.Docker, total); err != nil {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
@@ -104,7 +104,7 @@ func TestReleaseDoesNotDeadlockWithPreemption(t *testing.T) {
 func TestRefundDoesNotDeadlockWithCreate(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
-	if err := SetCapacityPool(ctx, pool, provider.Docker, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 30}); err != nil {
+	if err := SetCapacityPool(ctx, pool, provider.Docker, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 30}); err != nil {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
 	callerID, err := CreateCaller(ctx, pool, newCaller())

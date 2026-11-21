@@ -14,7 +14,7 @@ func TestSetPrices(t *testing.T) {
 	s := newServer(t)
 	admin := s.adminToken(t)
 
-	rec := s.put(t, admin, "/prices/docker", `{"cpu_core": 10000, "ram_gb": 20000, "disk_gb": 1000}`)
+	rec := s.put(t, admin, "/prices/docker", `{"per_cpu_core": 10000, "per_ram_gb": 20000, "per_disk_gb": 1000}`)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d; body %s", rec.Code, http.StatusNoContent, rec.Body)
 	}
@@ -23,7 +23,7 @@ func TestSetPrices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHourlyPrices() error = %v", err)
 	}
-	if want := (provider.Prices{CPUCore: 10000, RAMGB: 20000, DiskGB: 1000}); prices != want {
+	if want := (provider.Prices{PerCPUCore: 10000, PerRAMGB: 20000, PerDiskGB: 1000}); prices != want {
 		t.Errorf("prices = %+v, want %+v", prices, want)
 	}
 
@@ -35,7 +35,7 @@ func TestSetPrices(t *testing.T) {
 
 func TestSetPricesForbidden(t *testing.T) {
 	s := newServer(t)
-	body := `{"cpu_core": 9000000, "ram_gb": 9000000, "disk_gb": 9000000}`
+	body := `{"per_cpu_core": 9000000, "per_ram_gb": 9000000, "per_disk_gb": 9000000}`
 
 	for name, key := range map[string]string{"user": s.keyWithRole(t, db.RoleUser), "agent": s.keyWithRole(t, db.RoleAgent)} {
 		if rec := s.put(t, key, "/prices/docker", body); rec.Code != http.StatusForbidden {
@@ -50,7 +50,7 @@ func TestSetPricesForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHourlyPrices() error = %v", err)
 	}
-	if prices.CPUCore == 9000000 {
+	if prices.PerCPUCore == 9000000 {
 		t.Error("prices changed by a non-admin")
 	}
 }
@@ -66,13 +66,13 @@ func TestSetPricesRejected(t *testing.T) {
 		code int
 		want string
 	}{
-		{name: "unknown provider", path: "/prices/aws", body: `{"cpu_core": 1000000, "ram_gb": 1000000, "disk_gb": 1000000}`, code: http.StatusBadRequest, want: "provider not configured"},
-		{name: "unconfigured provider", path: "/prices/cloud", body: `{"cpu_core": 1000000, "ram_gb": 1000000, "disk_gb": 1000000}`, code: http.StatusBadRequest, want: "provider not configured"},
+		{name: "unknown provider", path: "/prices/aws", body: `{"per_cpu_core": 1000000, "per_ram_gb": 1000000, "per_disk_gb": 1000000}`, code: http.StatusBadRequest, want: "provider not configured"},
+		{name: "unconfigured provider", path: "/prices/cloud", body: `{"per_cpu_core": 1000000, "per_ram_gb": 1000000, "per_disk_gb": 1000000}`, code: http.StatusBadRequest, want: "provider not configured"},
 		{name: "malformed json", path: "/prices/docker", body: `{`, code: http.StatusBadRequest, want: "invalid request body"},
 		{name: "unknown field", path: "/prices/docker", body: `{"cpu": 1000000}`, code: http.StatusBadRequest, want: "unknown field"},
-		{name: "missing price", path: "/prices/docker", body: `{"cpu_core": 1000000, "ram_gb": 1000000}`, code: http.StatusBadRequest, want: "required"},
-		{name: "negative price", path: "/prices/docker", body: `{"cpu_core": 1000000, "ram_gb": -10000, "disk_gb": 1000000}`, code: http.StatusBadRequest, want: "must not be negative"},
-		{name: "not a number", path: "/prices/docker", body: `{"cpu_core": "cheap", "ram_gb": 1000000, "disk_gb": 1000000}`, code: http.StatusBadRequest, want: "invalid request body"},
+		{name: "missing price", path: "/prices/docker", body: `{"per_cpu_core": 1000000, "per_ram_gb": 1000000}`, code: http.StatusBadRequest, want: "required"},
+		{name: "negative price", path: "/prices/docker", body: `{"per_cpu_core": 1000000, "per_ram_gb": -10000, "per_disk_gb": 1000000}`, code: http.StatusBadRequest, want: "must not be negative"},
+		{name: "not a number", path: "/prices/docker", body: `{"per_cpu_core": "cheap", "per_ram_gb": 1000000, "per_disk_gb": 1000000}`, code: http.StatusBadRequest, want: "invalid request body"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

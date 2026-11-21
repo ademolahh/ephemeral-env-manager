@@ -54,14 +54,14 @@ type NewEnvironment struct {
 
 const environmentColumns = `
 	id, created_at, expires_at, type, status, deleted_at, provider, endpoint,
-	cpu_cores, ram_gb, disk_gb, hourly_rate, caller_id, failure_reason,
+	cpu_millis, ram_mb, disk_gb, hourly_rate, caller_id, failure_reason,
 	template_name, template_version, backend, api_key_id`
 
 func scanEnvironment(row pgx.Row) (Environment, error) {
 	var e Environment
 	err := row.Scan(
 		&e.ID, &e.CreatedAt, &e.ExpiresAt, &e.Type, &e.Status, &e.DeletedAt, &e.Provider, &e.Endpoint,
-		&e.Resources.CPUCore, &e.Resources.RAMGB, &e.Resources.DiskGB, &e.HourlyRate, &e.CallerID, &e.FailureReason,
+		&e.Resources.CPUMillis, &e.Resources.RAMMB, &e.Resources.DiskGB, &e.HourlyRate, &e.CallerID, &e.FailureReason,
 		&e.TemplateName, &e.TemplateVersion, &e.Backend, &e.APIKeyID,
 	)
 	return e, err
@@ -78,14 +78,14 @@ func CreateEnvironment(ctx context.Context, q DBTX, e NewEnvironment) (uuid.UUID
 	_, err = tx.Exec(ctx, `
 		INSERT INTO environments (
 			id, expires_at, type, provider,
-			cpu_cores, ram_gb, disk_gb, hourly_rate,
+			cpu_millis, ram_mb, disk_gb, hourly_rate,
 			caller_id, template_name, template_version, idempotency_key,
 			estimated_cost, reserved_cost, api_key_id
 		)
 		VALUES ($1, now() + make_interval(secs => $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
 			$13::bigint, CASE WHEN $3::env_type = 'PROD_BUG' THEN 0 ELSE $13::bigint END, $14)`,
 		id, e.TTL.Seconds(), e.Type, e.Provider,
-		e.Resources.CPUCore, e.Resources.RAMGB, e.Resources.DiskGB, e.HourlyRate,
+		e.Resources.CPUMillis, e.Resources.RAMMB, e.Resources.DiskGB, e.HourlyRate,
 		e.CallerID, e.TemplateName, e.TemplateVersion, e.IdempotencyKey, e.EstimatedCost, e.APIKeyID,
 	)
 	if err != nil {
@@ -241,7 +241,7 @@ func updateStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reaso
 					hourly_rate * GREATEST(0, extract(epoch FROM LEAST(now(), expires_at) - created_at)) / 36000000)::bigint)
 					ELSE charged_cost END
 			WHERE id = $1 AND status::text = ANY($4)
-			RETURNING provider, cpu_cores, ram_gb, disk_gb, caller_id, type, estimated_cost, reserved_cost, charged_cost
+			RETURNING provider, cpu_millis, ram_mb, disk_gb, caller_id, type, estimated_cost, reserved_cost, charged_cost
 		), settled AS (
 			UPDATE callers c SET
 				cost_used     = GREATEST(0, c.cost_used - GREATEST(0, env.reserved_cost - env.charged_cost)),
@@ -252,8 +252,8 @@ func updateStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reaso
 			WHERE $6 AND c.id = env.caller_id
 		), released AS (
 			UPDATE capacity_pools p SET
-				available_cpu_cores = LEAST(p.default_cpu_cores, p.available_cpu_cores + env.cpu_cores),
-				available_ram_gb    = LEAST(p.default_ram_gb, p.available_ram_gb + env.ram_gb),
+				available_cpu_millis = LEAST(p.default_cpu_millis, p.available_cpu_millis + env.cpu_millis),
+				available_ram_mb    = LEAST(p.default_ram_mb, p.available_ram_mb + env.ram_mb),
 				available_disk_gb   = LEAST(p.default_disk_gb, p.available_disk_gb + env.disk_gb)
 			FROM env
 			WHERE $5 AND p.provider = env.provider
@@ -392,10 +392,10 @@ func ListPreemptible(ctx context.Context, q DBTX, p provider.Type, types []EnvTy
 func CallerUsage(ctx context.Context, q DBTX, callerID uuid.UUID) (provider.Resources, error) {
 	var r provider.Resources
 	err := q.QueryRow(ctx, `
-		SELECT COALESCE(sum(cpu_cores), 0), COALESCE(sum(ram_gb), 0), COALESCE(sum(disk_gb), 0)
+		SELECT COALESCE(sum(cpu_millis), 0), COALESCE(sum(ram_mb), 0), COALESCE(sum(disk_gb), 0)
 		FROM environments
 		WHERE caller_id = $1 AND status IN ('PROVISIONING', 'RUNNING')`, callerID,
-	).Scan(&r.CPUCore, &r.RAMGB, &r.DiskGB)
+	).Scan(&r.CPUMillis, &r.RAMMB, &r.DiskGB)
 
 	if err != nil {
 		return provider.Resources{}, fmt.Errorf("caller usage %s: %w", callerID, err)

@@ -81,7 +81,7 @@ func TestAdminLogin(t *testing.T) {
 		t.Errorf("session = %+v, want admin %s", sess, id)
 	}
 
-	rec = s.put(t, got.Token, "/capacity/docker", `{"total": {"cpu_core": 200, "ram_gb": 200, "disk_gb": 2000}}`)
+	rec = s.put(t, got.Token, "/capacity/docker", `{"total": {"cpu_millis": 200000, "ram_mb": 204800, "disk_gb": 2000}}`)
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("admin action with login token = %d, want 204; body %s", rec.Code, rec.Body)
 	}
@@ -119,7 +119,7 @@ func TestAdminLoginRejected(t *testing.T) {
 
 func TestAdminTokenRejected(t *testing.T) {
 	s := newServer(t)
-	body := `{"total": {"cpu_core": 1, "ram_gb": 1, "disk_gb": 1}}`
+	body := `{"total": {"cpu_millis": 1000, "ram_mb": 1024, "disk_gb": 1}}`
 	loggedOut := s.adminToken(t)
 	if rec := s.request(t, http.MethodPost, "/auth/logout", loggedOut); rec.Code != http.StatusNoContent {
 		t.Fatalf("logout = %d, want 204; body %s", rec.Code, rec.Body)

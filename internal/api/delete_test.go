@@ -25,7 +25,7 @@ func (s server) callerWithRole(t *testing.T, role db.Role) (uuid.UUID, string) {
 	ctx := context.Background()
 	callerID, err := db.CreateCaller(ctx, s.tx, db.NewCaller{
 		PermittedEnv:    db.EnvProdBug,
-		Quota:           provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50},
+		Quota:           provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50},
 		CostBudgetTotal: 10000,
 		BudgetExpiresAt: time.Now().Add(24 * time.Hour),
 	})
@@ -74,7 +74,7 @@ func (s server) createEnv(t *testing.T, key string) db.Environment {
 
 func TestDeleteEnv(t *testing.T) {
 	s := newServer(t)
-	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
+	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 	created := s.createEnv(t, key)
 
 	rec := s.delete(t, key, created.ID.String())
@@ -101,7 +101,7 @@ func TestDeleteEnv(t *testing.T) {
 
 func TestDeleteEnvByAdmin(t *testing.T) {
 	s := newServer(t)
-	owner := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
+	owner := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 	created := s.createEnv(t, owner)
 
 	if rec := s.delete(t, s.adminToken(t), created.ID.String()); rec.Code != http.StatusAccepted {
@@ -111,7 +111,7 @@ func TestDeleteEnvByAdmin(t *testing.T) {
 
 func TestDeleteEnvNotFound(t *testing.T) {
 	s := newServer(t)
-	owner := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
+	owner := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 	created := s.createEnv(t, owner)
 
 	tests := []struct {
@@ -142,7 +142,7 @@ func TestDeleteEnvNotFound(t *testing.T) {
 
 func TestDeleteEnvBadRequest(t *testing.T) {
 	s := newServer(t)
-	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUCore: 10, RAMGB: 20, DiskGB: 50})
+	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 
 	if rec := s.delete(t, key, "not-a-uuid"); rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
