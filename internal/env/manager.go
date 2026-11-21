@@ -233,6 +233,18 @@ func (m *Manager) owned(ctx context.Context, caller db.AuthenticatedCaller, id u
 	return e, nil
 }
 
+// Expose adds the proxy access URL and token to an environment that has an
+// endpoint and is still active, for returning to its owner.
+func (m *Manager) Expose(e db.Environment) db.Environment {
+	if m.proxy == nil || e.Endpoint == nil || (e.Status != db.EnvProvisioning && e.Status != db.EnvRunning) {
+		return e
+	}
+
+	url, token := m.proxy.AccessURL(e.ID), m.proxy.AccessToken(e.ID)
+	e.AccessURL, e.AccessToken = &url, &token
+	return e
+}
+
 func (m *Manager) HasProvider(t provider.Type) bool {
 	_, ok := m.providers[t]
 	return ok

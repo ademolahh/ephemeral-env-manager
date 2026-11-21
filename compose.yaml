@@ -16,6 +16,7 @@ services:
       PROXY_DOMAIN: ${PROXY_DOMAIN:-env.localhost}
       PROXY_PUBLIC_PORT: ${PROXY_PUBLIC_PORT:-8000}
       PROXY_CONTAINER: ${PROXY_CONTAINER:-eem-proxy}
+      PROXY_SECRET: ${PROXY_SECRET:?set PROXY_SECRET in .env, for example with openssl rand -hex 32}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
@@ -35,6 +36,7 @@ services:
       PROXY_DOMAIN: ${PROXY_DOMAIN:-env.localhost}
       PROXY_PUBLIC_PORT: ${PROXY_PUBLIC_PORT:-8000}
       PROXY_CONTAINER: ${PROXY_CONTAINER:-eem-proxy}
+      PROXY_SECRET: ${PROXY_SECRET:?set PROXY_SECRET in .env, for example with openssl rand -hex 32}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
@@ -50,6 +52,7 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       PROXY_DOMAIN: ${PROXY_DOMAIN:-env.localhost}
       PROXY_LISTEN_ADDR: 10.231.0.10:80
+      PROXY_SECRET: ${PROXY_SECRET:?set PROXY_SECRET in .env, for example with openssl rand -hex 32}
     ports:
       - "${PROXY_PUBLIC_PORT:-8000}:80"
     networks:

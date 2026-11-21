@@ -13,7 +13,7 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/proxy"
 )
 
-var testProxy = &proxy.Proxy{Domain: "env.localhost", PublicPort: 8000, Container: "eem-proxy"}
+var testProxy = &proxy.Proxy{Domain: "env.localhost", PublicPort: 8000, Container: "eem-proxy", Secret: []byte("0123456789abcdef0123456789abcdef")}
 
 func createRouted(t *testing.T, tx pgx.Tx, callerID uuid.UUID, m *Manager) db.Environment {
 	t.Helper()
@@ -211,5 +211,39 @@ func TestResolveStuckSetsRoute(t *testing.T) {
 	}
 	if e.Backend == nil || *e.Backend != "eem-x-workload:8080" {
 		t.Errorf("backend = %v, want eem-x-workload:8080", e.Backend)
+	}
+}
+
+func TestExposeAddsAccessOnlyWhileActive(t *testing.T) {
+	tx, callerID := setup(t)
+	fake := &fakeProvider{address: "eem-x-workload:8080"}
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake}, WithProxy(testProxy))
+
+	created, err := m.Create(context.Background(), CreateRequest{
+		CallerID: callerID,
+		Type:     db.EnvRegularTesting,
+		Workload: "ghcr.io/acme/dashboard:abc123",
+		Template: withPorts(),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	m.WaitReady()
+
+	e := m.Expose(created)
+	if e.AccessToken == nil || *e.AccessToken != testProxy.AccessToken(created.ID) {
+		t.Fatalf("access token = %v, want the proxy token", e.AccessToken)
+	}
+	if e.AccessURL == nil || *e.AccessURL != testProxy.AccessURL(created.ID) {
+		t.Errorf("access url = %v, want %s", e.AccessURL, testProxy.AccessURL(created.ID))
+	}
+
+	created.Status = db.EnvDeleted
+	if e := m.Expose(created); e.AccessToken != nil || e.AccessURL != nil {
+		t.Errorf("deleted environment exposed access %v %v, want none", e.AccessURL, e.AccessToken)
+	}
+
+	if e := NewManager(tx, nil).Expose(created); e.AccessToken != nil {
+		t.Error("manager without a proxy exposed an access token")
 	}
 }

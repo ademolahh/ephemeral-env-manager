@@ -61,7 +61,7 @@ func (h *Handler) MCP() http.Handler {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_environment",
-		Description: "Get an environment's status, endpoint and instance status.",
+		Description: "Get an environment's status, endpoint and instance status. Reach the endpoint by sending access_token in the X-EEM-Access-Token header, or open access_url in a browser.",
 	}, h.mcpGetEnv)
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -171,7 +171,7 @@ func (h *Handler) mcpCreateEnv(ctx context.Context, req *mcp.CallToolRequest, in
 		return nil, nil, toolError("create environment", err)
 	}
 
-	return nil, e, nil
+	return nil, h.envs.Expose(e), nil
 }
 
 func (h *Handler) mcpGetEnv(ctx context.Context, req *mcp.CallToolRequest, in envIDInput) (*mcp.CallToolResult, any, error) {
@@ -191,7 +191,7 @@ func (h *Handler) mcpGetEnv(ctx context.Context, req *mcp.CallToolRequest, in en
 	}
 
 	e.InstanceStatus = status
-	return nil, e, nil
+	return nil, h.envs.Expose(e), nil
 }
 
 func (h *Handler) mcpListEnvs(ctx context.Context, req *mcp.CallToolRequest, in listEnvsInput) (*mcp.CallToolResult, any, error) {

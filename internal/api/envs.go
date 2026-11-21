@@ -62,7 +62,7 @@ func (h *Handler) CreateEnv(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Location", "/envs/"+e.ID.String())
-	writeJSON(w, http.StatusAccepted, e)
+	writeJSON(w, http.StatusAccepted, h.envs.Expose(e))
 }
 
 func (h *Handler) createRequest(ctx context.Context, caller db.AuthenticatedCaller, req createEnvRequest, key string) (env.CreateRequest, error) {
@@ -119,7 +119,7 @@ func (h *Handler) GetEnv(w http.ResponseWriter, r *http.Request) {
 	}
 
 	e.InstanceStatus = status
-	writeJSON(w, http.StatusOK, e)
+	writeJSON(w, http.StatusOK, h.envs.Expose(e))
 }
 
 func (h *Handler) ListEnvs(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +162,10 @@ func (h *Handler) listEnvs(ctx context.Context, caller db.AuthenticatedCaller, s
 
 	if resp.Environments == nil {
 		resp.Environments = []db.Environment{}
+	}
+
+	for i, e := range resp.Environments {
+		resp.Environments[i] = h.envs.Expose(e)
 	}
 
 	for _, s := range envStatuses {

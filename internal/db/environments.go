@@ -36,6 +36,10 @@ type Environment struct {
 	TemplateName    string             `json:"template_name"`
 	TemplateVersion string             `json:"template_version"`
 	InstanceStatus  provider.Status    `json:"instance_status,omitempty"`
+	// AccessURL and AccessToken open the endpoint through the proxy. They are
+	// derived per response for the environment's owner and never stored.
+	AccessURL   *string `json:"access_url,omitempty"`
+	AccessToken *string `json:"access_token,omitempty"`
 }
 
 type NewEnvironment struct {

@@ -35,6 +35,11 @@ func main() {
 		logging.Fatal("PROXY_DOMAIN is required", nil)
 	}
 
+	secret, err := proxy.SecretFromEnv()
+	if err != nil {
+		logging.Fatal("proxy", err)
+	}
+
 	addr := os.Getenv("PROXY_LISTEN_ADDR")
 	if addr == "" {
 		addr = ":80"
@@ -50,7 +55,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           (&proxy.Proxy{Domain: domain}).Handler(pool),
+		Handler:           (&proxy.Proxy{Domain: domain, Secret: secret}).Handler(pool),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

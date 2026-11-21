@@ -482,10 +482,12 @@ function renderEnvironments(page) {
     );
     const actions = document.createElement("div");
     actions.className = "env-card-actions";
-    if (env.endpoint && /^https?:\/\//i.test(env.endpoint)) {
+    // access_url carries the proxy token; the proxy swaps it for a cookie.
+    const target = env.access_url || env.endpoint;
+    if (target && /^https?:\/\//i.test(target)) {
       const link = document.createElement("a");
       link.className = "endpoint";
-      link.href = env.endpoint;
+      link.href = target;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       link.textContent = "Open environment ↗";
