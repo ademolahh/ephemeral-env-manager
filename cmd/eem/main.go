@@ -90,6 +90,12 @@ func main() {
 
 	envs := env.NewManager(pool, map[provider.Type]provider.Provider{provider.Docker: d}, envOpts...)
 
+	if n, err := envs.Resume(ctx); err != nil {
+		logging.Fatal("resume", err)
+	} else if n > 0 {
+		slog.Info("resumed readiness checks", "environments", n)
+	}
+
 	prometheus.MustRegister(metrics.NewStateCollector(pool))
 	admin.Start(ctx, map[string]admin.Check{
 		"postgres": pool.Ping,

@@ -398,6 +398,26 @@ func (m *Manager) RemoveOrphans(ctx context.Context) ([]string, error) {
 	return removed, errors.Join(errs...)
 }
 
+// Resume watches environments a previous eem process left PROVISIONING until
+// they become ready or fail, instead of leaving them for the worker's stuck
+// check. One whose containers were never created reports missing and fails.
+// It assumes a single eem process, since another's in-flight creations would
+// also look missing.
+func (m *Manager) Resume(ctx context.Context) (int, error) {
+	pending, err := db.ListStuckProvisioning(ctx, m.db, 0)
+	if err != nil {
+		return 0, fmt.Errorf("resume provisioning: %w", err)
+	}
+
+	m.watching.Add(len(pending))
+	m.wg.Go(func() {
+		for _, e := range pending {
+			m.provisioned <- e.ID
+		}
+	})
+	return len(pending), nil
+}
+
 func (m *Manager) Wait() {
 	m.wg.Wait()
 }
