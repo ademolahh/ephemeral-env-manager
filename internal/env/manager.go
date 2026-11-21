@@ -391,10 +391,6 @@ func (m *Manager) WaitReady() {
 	m.watching.Wait()
 }
 
-func (m *Manager) List(ctx context.Context, e db.Environment) (any, error) {
-	return m.providers[e.Provider].List(ctx)
-}
-
 func (m *Manager) provision(ctx context.Context, p provider.Provider, id uuid.UUID, req CreateRequest) {
 	defer func() {
 		if r := recover(); r != nil {

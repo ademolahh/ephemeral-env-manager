@@ -5,36 +5,36 @@ import (
 )
 
 type Template struct {
-	Name            string        `yaml:"name" json:"name"`
-	Version         string        `yaml:"version" json:"version"`
-	Providers       []Type        `yaml:"providers" json:"providers"`
-	DefaultProvider Type          `yaml:"default_provider" json:"default_provider"`
-	TTL             time.Duration `yaml:"ttl" json:"-"`
-	Workload        Workload      `yaml:"workload" json:"workload"`
-	Services        []Service     `yaml:"services" json:"services"`
+	Name            string        `json:"name"`
+	Version         string        `json:"version"`
+	Providers       []Type        `json:"providers"`
+	DefaultProvider Type          `json:"default_provider"`
+	TTL             time.Duration `json:"-"`
+	Workload        Workload      `json:"workload"`
+	Services        []Service     `json:"services"`
 }
 
 type Workload struct {
-	Ports       []int             `yaml:"ports" json:"ports"`
-	Resources   Resources         `yaml:"resources" json:"resources"`
-	Healthcheck string            `yaml:"healthcheck" json:"healthcheck"`
-	Env         map[string]string `yaml:"env" json:"env"`
-	Aliases     []string          `yaml:"aliases" json:"aliases,omitempty"`
+	Ports       []int             `json:"ports"`
+	Resources   Resources         `json:"resources"`
+	Healthcheck string            `json:"healthcheck"`
+	Env         map[string]string `json:"env"`
+	Aliases     []string          `json:"aliases,omitempty"`
 }
 
 type Service struct {
-	Name        string            `yaml:"name" json:"name"`
-	Image       string            `yaml:"image" json:"image"`
-	Resources   Resources         `yaml:"resources" json:"resources"`
-	Env         map[string]string `yaml:"env" json:"env"`
-	Healthcheck string            `yaml:"healthcheck" json:"healthcheck"`
-	Aliases     []string          `yaml:"aliases" json:"aliases,omitempty"`
+	Name        string            `json:"name"`
+	Image       string            `json:"image"`
+	Resources   Resources         `json:"resources"`
+	Env         map[string]string `json:"env"`
+	Healthcheck string            `json:"healthcheck"`
+	Aliases     []string          `json:"aliases,omitempty"`
 }
 
 type Resources struct {
-	CPUCore int `yaml:"cpu_core" json:"cpu_core"`
-	RAMGB   int `yaml:"ram_gb" json:"ram_gb"`
-	DiskGB  int `yaml:"disk_gb" json:"disk_gb"`
+	CPUCore int `json:"cpu_core"`
+	RAMGB   int `json:"ram_gb"`
+	DiskGB  int `json:"disk_gb"`
 }
 
 type Prices struct {
