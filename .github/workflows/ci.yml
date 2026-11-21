@@ -6,10 +6,48 @@ on:
   pull_request:
 
 jobs:
-  build:
+  lint:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.14.0
+          install-mode: goinstall
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: eem
+          POSTGRES_PASSWORD: eem
+          POSTGRES_DB: eem_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U eem -d eem_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
+      TEST_DATABASE_URL: postgres://eem:eem@localhost:5432/eem_test?sslmode=disable
+      TEST_REDIS_URL: redis://localhost:6379/1
       TEST_DOCKER: "1"
+      TEST_REQUIRE_ALL: "1"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -17,3 +55,11 @@ jobs:
           go-version-file: go.mod
       - run: go build ./...
       - run: go test -race -count=1 ./...
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build --target eem -t eem .
+      - run: docker build --target worker -t eem-worker .
+      - run: docker build --target proxy -t eem-proxy .

@@ -31,7 +31,7 @@ func DatabaseURL(t *testing.T) string {
 	checkDotEnv(t)
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
+		skip(t, "TEST_DATABASE_URL")
 	}
 	return url
 }
@@ -40,7 +40,7 @@ func RequireDocker(t *testing.T) {
 	t.Helper()
 	checkDotEnv(t)
 	if os.Getenv("TEST_DOCKER") == "" {
-		t.Skip("TEST_DOCKER not set")
+		skip(t, "TEST_DOCKER")
 	}
 }
 
@@ -161,7 +161,7 @@ func loadDotEnv(path string) error {
 	if err != nil {
 		return fmt.Errorf("load %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	s := bufio.NewScanner(f)
 	for s.Scan() {
@@ -178,7 +178,9 @@ func loadDotEnv(path string) error {
 		key = strings.TrimSpace(strings.TrimPrefix(key, "export "))
 		value = strings.Trim(strings.TrimSpace(value), `"'`)
 		if _, set := os.LookupEnv(key); !set {
-			os.Setenv(key, value)
+			if err := os.Setenv(key, value); err != nil {
+				return fmt.Errorf("load %s: set %s: %w", path, key, err)
+			}
 		}
 	}
 
@@ -193,7 +195,7 @@ func Sessions(t *testing.T) *session.Store {
 	checkDotEnv(t)
 	url := os.Getenv("TEST_REDIS_URL")
 	if url == "" {
-		t.Skip("TEST_REDIS_URL not set")
+		skip(t, "TEST_REDIS_URL")
 	}
 
 	ctx := context.Background()
@@ -215,4 +217,14 @@ func Sessions(t *testing.T) *session.Store {
 		}
 	})
 	return session.New(rdb, prefix)
+}
+
+// skip skips a test whose dependency is not configured, or fails it when
+// TEST_REQUIRE_ALL is set so CI cannot silently skip integration tests.
+func skip(t *testing.T, variable string) {
+	t.Helper()
+	if os.Getenv("TEST_REQUIRE_ALL") != "" {
+		t.Fatalf("%s not set and TEST_REQUIRE_ALL requires every test to run", variable)
+	}
+	t.Skipf("%s not set", variable)
 }
