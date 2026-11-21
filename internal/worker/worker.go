@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/env"
+	"github.com/ademolahh/ephemeral-env-manager/internal/metrics"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
@@ -34,10 +36,10 @@ type task struct {
 func (w *Worker) tasks() []task {
 	return []task{
 		{"stop expired", func(ctx context.Context) error {
-			return w.stop(ctx, "expired", db.ListExpiredEnvironments)
+			return w.stop(ctx, "expired", "expired", db.ListExpiredEnvironments)
 		}},
 		{"stop over budget", func(ctx context.Context) error {
-			return w.stop(ctx, "caller budget exhausted or expired", db.ListBudgetExhaustedEnvironments)
+			return w.stop(ctx, "over_budget", "caller budget exhausted or expired", db.ListBudgetExhaustedEnvironments)
 		}},
 		{"stop missing", w.stopMissing},
 		{"resolve stuck", w.resolveStuck},
@@ -60,6 +62,7 @@ func (w *Worker) loop(ctx context.Context, t task) {
 
 	for {
 		if err := t.run(ctx); err != nil && ctx.Err() == nil {
+			metrics.WorkerTaskErrors.WithLabelValues(t.name).Inc()
 			slog.Error("worker task failed", "task", t.name, "err", err)
 		}
 
@@ -71,7 +74,7 @@ func (w *Worker) loop(ctx context.Context, t task) {
 	}
 }
 
-func (w *Worker) stop(ctx context.Context, reason string, list func(context.Context, db.DBTX) ([]db.Environment, error)) error {
+func (w *Worker) stop(ctx context.Context, action, reason string, list func(context.Context, db.DBTX) ([]db.Environment, error)) error {
 	envs, err := list(ctx, w.db)
 	if err != nil {
 		return err
@@ -79,7 +82,7 @@ func (w *Worker) stop(ctx context.Context, reason string, list func(context.Cont
 
 	var errs []error
 	for _, e := range envs {
-		if err := w.markDeleting(ctx, e, reason); err != nil {
+		if err := w.markDeleting(ctx, e, action, reason); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -105,7 +108,7 @@ func (w *Worker) stopMissing(ctx context.Context) error {
 		}
 
 		if status == provider.StatusMissing || status == provider.StatusUnknown {
-			if err := w.markDeleting(ctx, e, "missing from "+string(e.Provider)); err != nil {
+			if err := w.markDeleting(ctx, e, "missing", "missing from "+string(e.Provider)); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -113,10 +116,11 @@ func (w *Worker) stopMissing(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-func (w *Worker) markDeleting(ctx context.Context, e db.Environment, reason string) error {
+func (w *Worker) markDeleting(ctx context.Context, e db.Environment, action, reason string) error {
 	if _, err := w.envs.MarkDeleting(ctx, e); err != nil {
 		return fmt.Errorf("environment %s: %w", e.ID, err)
 	}
+	metrics.WorkerActions.WithLabelValues(action).Inc()
 	slog.Info("deleting environment", "env", e.ID, "reason", reason)
 	return nil
 }
@@ -135,6 +139,7 @@ func (w *Worker) resolveStuck(ctx context.Context) error {
 			continue
 		}
 		if status != "" {
+			metrics.WorkerActions.WithLabelValues("stuck_" + strings.ToLower(string(status))).Inc()
 			slog.Warn("resolved environment stuck in PROVISIONING", "env", e.ID, "status", status)
 		}
 	}
@@ -153,6 +158,7 @@ func (w *Worker) teardownDeleting(ctx context.Context) error {
 			errs = append(errs, err)
 			continue
 		}
+		metrics.WorkerActions.WithLabelValues("deleted").Inc()
 		slog.Info("environment deleted", "env", e.ID)
 	}
 	return errors.Join(errs...)
@@ -161,6 +167,7 @@ func (w *Worker) teardownDeleting(ctx context.Context) error {
 func (w *Worker) removeOrphans(ctx context.Context) error {
 	removed, err := w.envs.RemoveOrphans(ctx)
 	for _, id := range removed {
+		metrics.WorkerActions.WithLabelValues("orphan_removed").Inc()
 		slog.Warn("removed leftover resources with no active record", "env", id)
 	}
 	return err

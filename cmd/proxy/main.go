@@ -10,12 +10,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ademolahh/ephemeral-env-manager/internal/admin"
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/logging"
 	"github.com/ademolahh/ephemeral-env-manager/internal/proxy"
 )
 
 func main() {
+	admin.HandleHealthcheckFlag()
 	if err := logging.Setup("proxy"); err != nil {
 		logging.Fatal("logging", err)
 	}
@@ -43,6 +45,8 @@ func main() {
 		logging.Fatal("database", err)
 	}
 	defer pool.Close()
+
+	admin.Start(ctx, map[string]admin.Check{"postgres": pool.Ping})
 
 	srv := &http.Server{
 		Addr:              addr,

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
+	"github.com/ademolahh/ephemeral-env-manager/internal/metrics"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 	"github.com/ademolahh/ephemeral-env-manager/internal/proxy"
 )
@@ -105,15 +106,18 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (db.Environment
 	}
 
 	bg := context.WithoutCancel(ctx)
-	for _, id := range r.preempted {
+	for _, victim := range r.preempted {
+		metrics.Preemptions.WithLabelValues(string(victim.Type)).Inc()
+		slog.Info("preempting environment", "env", victim.ID, "type", victim.Type, "for", req.Type)
 		m.wg.Go(func() {
-			if err := m.Teardown(bg, db.Environment{ID: id, Provider: pt}); err != nil {
-				slog.Error("tear down preempted environment", "env", id, "err", err)
+			if err := m.Teardown(bg, victim); err != nil {
+				slog.Error("tear down preempted environment", "env", victim.ID, "err", err)
 			}
 		})
 	}
 
 	if r.created {
+		metrics.EnvironmentsCreated.WithLabelValues(string(req.Type)).Inc()
 		m.wg.Go(func() { m.provision(bg, p, r.env.ID, req) })
 	}
 
@@ -447,7 +451,10 @@ func (m *Manager) checkProvisioned(id uuid.UUID) bool {
 
 	if err := db.MarkEnvironmentRunning(ctx, m.db, id, m.backend(ctx, p, id)); err != nil {
 		slog.Error("mark environment running", "env", id, "err", err)
+		return true
 	}
+	metrics.TimeToReady.Observe(time.Since(e.CreatedAt).Seconds())
+	slog.Info("environment running", "env", id)
 	return true
 }
 
@@ -465,6 +472,7 @@ func (m *Manager) backend(ctx context.Context, p provider.Provider, id uuid.UUID
 }
 
 func (m *Manager) fail(ctx context.Context, id uuid.UUID, reason string) {
+	metrics.ProvisionFailures.Inc()
 	slog.Warn("provisioning failed", "env", id, "reason", reason)
 	if err := db.MarkEnvironmentFailed(ctx, m.db, id, reason); err != nil {
 		slog.Error("mark environment failed", "env", id, "err", err)
@@ -474,7 +482,7 @@ func (m *Manager) fail(ctx context.Context, id uuid.UUID, reason string) {
 type reservation struct {
 	env       db.Environment
 	created   bool
-	preempted []uuid.UUID
+	preempted []db.Environment
 }
 
 func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, px *proxy.Proxy, req CreateRequest) (reservation, error) {
@@ -610,7 +618,7 @@ func authorize(role db.Role, permitted db.EnvType, t db.EnvType) error {
 	return nil
 }
 
-func makeRoom(ctx context.Context, tx pgx.Tx, pt provider.Type, t db.EnvType, need provider.Resources) ([]uuid.UUID, error) {
+func makeRoom(ctx context.Context, tx pgx.Tx, pt provider.Type, t db.EnvType, need provider.Resources) ([]db.Environment, error) {
 	pool, err := db.LockCapacityPool(ctx, tx, pt)
 	if err != nil {
 		return nil, err
@@ -641,7 +649,7 @@ func makeRoom(ctx context.Context, tx pgx.Tx, pt provider.Type, t db.EnvType, ne
 		return priority(a.Type) - priority(b.Type)
 	})
 
-	var victims []uuid.UUID
+	var victims []db.Environment
 	for _, c := range candidates {
 		if fits(need, free) {
 			break
@@ -651,7 +659,7 @@ func makeRoom(ctx context.Context, tx pgx.Tx, pt provider.Type, t db.EnvType, ne
 			continue
 		}
 
-		victims = append(victims, c.ID)
+		victims = append(victims, c)
 		free = add(free, c.Resources)
 	}
 
@@ -659,9 +667,9 @@ func makeRoom(ctx context.Context, tx pgx.Tx, pt provider.Type, t db.EnvType, ne
 		return nil, fmt.Errorf("%s needs %+v, %+v free after preemption: %w", pt, need, free, ErrCapacityExceeded)
 	}
 
-	for _, id := range victims {
-		if err := db.MarkEnvironmentDeleting(ctx, tx, id); err != nil {
-			return nil, fmt.Errorf("preempt %s: %w", id, err)
+	for _, v := range victims {
+		if err := db.MarkEnvironmentDeleting(ctx, tx, v.ID); err != nil {
+			return nil, fmt.Errorf("preempt %s: %w", v.ID, err)
 		}
 	}
 

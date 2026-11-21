@@ -14,8 +14,10 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
+	"github.com/ademolahh/ephemeral-env-manager/internal/metrics"
 )
 
 var ErrNoContainer = errors.New("PROXY_CONTAINER is required when PROXY_DOMAIN is set")
@@ -93,7 +95,7 @@ func (p *Proxy) Handler(q db.DBTX) http.Handler {
 		},
 	}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return promhttp.InstrumentHandlerCounter(metrics.ProxyRequests, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := p.EnvID(r.Host)
 		if !ok {
 			http.Error(w, "environment not found", http.StatusNotFound)
@@ -113,5 +115,5 @@ func (p *Proxy) Handler(q db.DBTX) http.Handler {
 		}
 
 		rp.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), backendKey{}, backend)))
-	})
+	}))
 }

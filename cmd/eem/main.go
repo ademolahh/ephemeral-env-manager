@@ -11,11 +11,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/ademolahh/ephemeral-env-manager/internal/admin"
 	"github.com/ademolahh/ephemeral-env-manager/internal/api"
 	"github.com/ademolahh/ephemeral-env-manager/internal/auth"
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/env"
 	"github.com/ademolahh/ephemeral-env-manager/internal/logging"
+	"github.com/ademolahh/ephemeral-env-manager/internal/metrics"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider/docker"
 	"github.com/ademolahh/ephemeral-env-manager/internal/proxy"
@@ -23,6 +27,7 @@ import (
 )
 
 func main() {
+	admin.HandleHealthcheckFlag()
 	if err := logging.Setup("eem"); err != nil {
 		logging.Fatal("logging", err)
 	}
@@ -79,6 +84,13 @@ func main() {
 	}
 
 	envs := env.NewManager(pool, map[provider.Type]provider.Provider{provider.Docker: d}, envOpts...)
+
+	prometheus.MustRegister(metrics.NewStateCollector(pool))
+	admin.Start(ctx, map[string]admin.Check{
+		"postgres": pool.Ping,
+		"redis":    func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
+		"docker":   d.Ping,
+	})
 
 	srv := &http.Server{
 		Addr:              ":8080",

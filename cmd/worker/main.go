@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ademolahh/ephemeral-env-manager/internal/admin"
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/env"
 	"github.com/ademolahh/ephemeral-env-manager/internal/logging"
@@ -19,6 +20,7 @@ import (
 )
 
 func main() {
+	admin.HandleHealthcheckFlag()
 	if err := logging.Setup("worker"); err != nil {
 		logging.Fatal("logging", err)
 	}
@@ -68,6 +70,8 @@ func main() {
 	}
 
 	envs := env.NewManager(pool, map[provider.Type]provider.Provider{provider.Docker: d}, envOpts...)
+
+	admin.Start(ctx, map[string]admin.Check{"postgres": pool.Ping, "docker": d.Ping})
 
 	slog.Info("worker running", "interval", interval)
 	worker.New(pool, envs, interval).Run(ctx)
