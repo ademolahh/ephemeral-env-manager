@@ -11,14 +11,14 @@ import (
 )
 
 func writeServiceError(w http.ResponseWriter, op string, err error) {
-	status := errorStatus(err)
+	status, code := classify(err)
 	if status == http.StatusInternalServerError {
 		log.Printf("%s: %v", op, err)
-		writeError(w, status, "internal error")
+		writeErrorCode(w, status, code, "internal error")
 		return
 	}
 
-	writeError(w, status, err.Error())
+	writeErrorCode(w, status, code, err.Error())
 }
 
 type badRequestError struct {
@@ -33,47 +33,82 @@ func badRequest(format string, args ...any) error {
 	return &badRequestError{msg: fmt.Sprintf(format, args...)}
 }
 
-func errorStatus(err error) int {
+// apiErrors maps service errors to an HTTP status and a stable code that
+// clients can branch on instead of parsing the message.
+var apiErrors = []struct {
+	err    error
+	status int
+	code   string
+}{
+	{env.ErrInvalidEnvType, http.StatusBadRequest, "invalid_env_type"},
+	{env.ErrNoProvider, http.StatusBadRequest, "no_provider"},
+	{env.ErrProviderNotAllowed, http.StatusBadRequest, "provider_not_allowed"},
+	{env.ErrProviderUnavailable, http.StatusBadRequest, "provider_unavailable"},
+
+	{env.ErrNotPermitted, http.StatusForbidden, "not_permitted"},
+	{env.ErrQuotaExceeded, http.StatusForbidden, "quota_exceeded"},
+	{env.ErrBudgetExceeded, http.StatusForbidden, "budget_exceeded"},
+	{env.ErrBudgetExpired, http.StatusForbidden, "budget_expired"},
+	{env.ErrProdBugCapExceeded, http.StatusForbidden, "prod_bug_cap_exceeded"},
+	{env.ErrKeyCostCapExceeded, http.StatusForbidden, "key_cost_cap_exceeded"},
+	{db.ErrAPIKeyInactive, http.StatusForbidden, "api_key_inactive"},
+
+	{db.ErrEnvNotFound, http.StatusNotFound, "env_not_found"},
+	{db.ErrCallerNotFound, http.StatusNotFound, "caller_not_found"},
+	{db.ErrTemplateNotFound, http.StatusNotFound, "template_not_found"},
+	{db.ErrAPIKeyNotFound, http.StatusNotFound, "api_key_not_found"},
+
+	{db.ErrInvalidTransition, http.StatusConflict, "invalid_transition"},
+	{env.ErrNotRunning, http.StatusConflict, "env_not_running"},
+	{db.ErrCapacityBelowUsage, http.StatusConflict, "capacity_below_usage"},
+	{db.ErrGithubIDTaken, http.StatusConflict, "github_id_taken"},
+	{db.ErrTemplateExists, http.StatusConflict, "template_exists"},
+	{env.ErrIdempotencyKeyInUse, http.StatusConflict, "idempotency_key_in_use"},
+
+	{env.ErrCapacityExceeded, http.StatusServiceUnavailable, "capacity_exceeded"},
+	{db.ErrPoolNotFound, http.StatusServiceUnavailable, "capacity_pool_not_found"},
+	{db.ErrPricesNotFound, http.StatusServiceUnavailable, "prices_not_found"},
+}
+
+func classify(err error) (int, string) {
 	if _, ok := errors.AsType[*badRequestError](err); ok {
-		return http.StatusBadRequest
+		return http.StatusBadRequest, "bad_request"
 	}
 
-	switch {
-	case errors.Is(err, env.ErrInvalidEnvType),
-		errors.Is(err, env.ErrNoProvider),
-		errors.Is(err, env.ErrProviderNotAllowed),
-		errors.Is(err, env.ErrProviderUnavailable):
-		return http.StatusBadRequest
+	for _, e := range apiErrors {
+		if errors.Is(err, e.err) {
+			return e.status, e.code
+		}
+	}
 
-	case errors.Is(err, env.ErrNotPermitted),
-		errors.Is(err, env.ErrQuotaExceeded),
-		errors.Is(err, env.ErrBudgetExceeded),
-		errors.Is(err, env.ErrBudgetExpired),
-		errors.Is(err, env.ErrProdBugCapExceeded),
-		errors.Is(err, env.ErrKeyCostCapExceeded),
-		errors.Is(err, db.ErrAPIKeyInactive):
-		return http.StatusForbidden
+	return http.StatusInternalServerError, "internal"
+}
 
-	case errors.Is(err, db.ErrEnvNotFound),
-		errors.Is(err, db.ErrCallerNotFound),
-		errors.Is(err, db.ErrTemplateNotFound),
-		errors.Is(err, db.ErrAPIKeyNotFound):
-		return http.StatusNotFound
+func errorStatus(err error) int {
+	status, _ := classify(err)
+	return status
+}
 
-	case errors.Is(err, db.ErrInvalidTransition),
-		errors.Is(err, env.ErrNotRunning),
-		errors.Is(err, db.ErrCapacityBelowUsage),
-		errors.Is(err, db.ErrGithubIDTaken),
-		errors.Is(err, db.ErrTemplateExists),
-		errors.Is(err, env.ErrIdempotencyKeyInUse):
-		return http.StatusConflict
-
-	case errors.Is(err, env.ErrCapacityExceeded),
-		errors.Is(err, db.ErrPoolNotFound),
-		errors.Is(err, db.ErrPricesNotFound):
-		return http.StatusServiceUnavailable
-
+// statusCode is the code for errors that have no more specific one.
+func statusCode(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "bad_request"
+	case http.StatusUnauthorized:
+		return "unauthorized"
+	case http.StatusForbidden:
+		return "forbidden"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusConflict:
+		return "conflict"
+	case http.StatusRequestEntityTooLarge:
+		return "body_too_large"
+	case http.StatusGatewayTimeout:
+		return "timeout"
+	case http.StatusServiceUnavailable:
+		return "unavailable"
 	default:
-		return http.StatusInternalServerError
+		return "internal"
 	}
 }

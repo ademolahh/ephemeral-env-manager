@@ -32,6 +32,15 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
+type errorResponse struct {
+	Error string `json:"error"`
+	Code  string `json:"code"`
+}
+
 func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+	writeErrorCode(w, status, statusCode(status), msg)
+}
+
+func writeErrorCode(w http.ResponseWriter, status int, code, msg string) {
+	writeJSON(w, status, errorResponse{Error: msg, Code: code})
 }
