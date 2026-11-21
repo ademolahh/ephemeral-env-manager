@@ -1,0 +1,28 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - misspell
+    - unconvert
+    - usestdlibvars
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (*github.com/redis/go-redis/v9.Client).Close
+        - (*github.com/moby/moby/client.Client).Close
+        - (*github.com/jackc/pgx/v5.Conn).Close
+        - (github.com/jackc/pgx/v5.Tx).Rollback
+        - (*github.com/modelcontextprotocol/go-sdk/mcp.ClientSession).Close
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/ademolahh/ephemeral-env-manager

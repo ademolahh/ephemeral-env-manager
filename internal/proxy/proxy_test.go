@@ -202,7 +202,7 @@ func TestHandlerForwardsToBackend(t *testing.T) {
 		got = r
 		w.Header().Set("X-Workload", "1")
 		w.WriteHeader(http.StatusTeapot)
-		io.WriteString(w, "from workload")
+		_, _ = io.WriteString(w, "from workload")
 	}))
 	t.Cleanup(backend.Close)
 

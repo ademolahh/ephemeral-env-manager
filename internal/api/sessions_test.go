@@ -37,14 +37,14 @@ func newFakeGitHub(t *testing.T, id int64, login string) *fakeGitHub {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"access_token": "gho_test", "token_type": "bearer"}`))
+		_, _ = w.Write([]byte(`{"access_token": "gho_test", "token_type": "bearer"}`))
 	})
 	mux.HandleFunc("GET /user", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer gho_test" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"id": f.id, "login": f.login})
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": f.id, "login": f.login})
 	})
 	f.Server = httptest.NewServer(mux)
 	t.Cleanup(f.Close)

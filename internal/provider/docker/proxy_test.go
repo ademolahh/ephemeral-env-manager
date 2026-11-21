@@ -28,7 +28,7 @@ func startProxy(t *testing.T, d *Docker) string {
 		t.Fatalf("create proxy: %v", err)
 	}
 	t.Cleanup(func() {
-		d.cli.ContainerRemove(context.Background(), created.ID, client.ContainerRemoveOptions{Force: true})
+		_, _ = d.cli.ContainerRemove(context.Background(), created.ID, client.ContainerRemoveOptions{Force: true})
 	})
 
 	if _, err := d.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
