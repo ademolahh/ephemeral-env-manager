@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,6 +89,15 @@ func (req createEnvRequest) override(tr *templateRequest) error {
 	}
 
 	return nil
+}
+
+// inlineIdentity names an environment's inline template so its record can't
+// pass for a stored one: "inline:" plus the given name, and a hash of the
+// spec that ran as the version.
+func inlineIdentity(tr templateRequest) (name, version string) {
+	spec, _ := json.Marshal(tr)
+	sum := sha256.Sum256(spec)
+	return "inline:" + tr.Name, "sha256:" + hex.EncodeToString(sum[:6])
 }
 
 func (h *Handler) resolveTemplate(ctx context.Context, f templateField) (templateRequest, error) {

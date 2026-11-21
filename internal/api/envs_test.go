@@ -193,8 +193,8 @@ func TestCreateEnv(t *testing.T) {
 	if want := int64(54569); got.HourlyRate != want {
 		t.Errorf("hourly_rate = %d, want %d", got.HourlyRate, want)
 	}
-	if got.TemplateName != "clear-dashboard" || got.TemplateVersion != "v1" {
-		t.Errorf("template = %s/%s, want clear-dashboard/v1", got.TemplateName, got.TemplateVersion)
+	if got.TemplateName != "inline:clear-dashboard" || !strings.HasPrefix(got.TemplateVersion, "sha256:") {
+		t.Errorf("template = %s/%s, want inline:clear-dashboard with a sha256 version", got.TemplateName, got.TemplateVersion)
 	}
 	if d := got.ExpiresAt.Sub(got.CreatedAt); d != 4*time.Hour {
 		t.Errorf("expires_at - created_at = %s, want 4h", d)

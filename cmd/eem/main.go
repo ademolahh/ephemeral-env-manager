@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -96,9 +97,20 @@ func main() {
 		"docker":   d.Ping,
 	})
 
+	var handlerOpts []api.Option
+	if v := os.Getenv("INLINE_TEMPLATES"); v != "" {
+		allow, err := strconv.ParseBool(v)
+		if err != nil {
+			logging.Fatal("INLINE_TEMPLATES must be true or false", err)
+		}
+		if !allow {
+			handlerOpts = append(handlerOpts, api.WithoutInlineTemplates())
+		}
+	}
+
 	srv := &http.Server{
 		Addr:              ":8080",
-		Handler:           api.Routes(api.NewHandler(pool, envs, session.New(rdb, "eem:"), github)),
+		Handler:           api.Routes(api.NewHandler(pool, envs, session.New(rdb, "eem:"), github, handlerOpts...)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

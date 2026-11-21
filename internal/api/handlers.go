@@ -12,8 +12,21 @@ type Handler struct {
 	envs     *env.Manager
 	sessions *session.Store
 	github   *auth.GitHub
+	noInline bool
 }
 
-func NewHandler(q db.DBTX, envs *env.Manager, sessions *session.Store, github *auth.GitHub) *Handler {
-	return &Handler{db: q, envs: envs, sessions: sessions, github: github}
+type Option func(*Handler)
+
+// WithoutInlineTemplates makes callers create environments from stored
+// templates only, so admins control every service image and setting.
+func WithoutInlineTemplates() Option {
+	return func(h *Handler) { h.noInline = true }
+}
+
+func NewHandler(q db.DBTX, envs *env.Manager, sessions *session.Store, github *auth.GitHub, opts ...Option) *Handler {
+	h := &Handler{db: q, envs: envs, sessions: sessions, github: github}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }

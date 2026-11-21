@@ -70,6 +70,10 @@ func (h *Handler) createRequest(ctx context.Context, caller db.AuthenticatedCall
 		return env.CreateRequest{}, badRequest("Idempotency-Key longer than %d characters", maxIdempotencyKeyLen)
 	}
 
+	if req.Template.Inline != nil && h.noInline {
+		return env.CreateRequest{}, badRequest("inline templates are disabled; use a stored template as name@version")
+	}
+
 	tr, err := h.resolveTemplate(ctx, req.Template)
 	if err != nil {
 		return env.CreateRequest{}, err
@@ -82,6 +86,10 @@ func (h *Handler) createRequest(ctx context.Context, caller db.AuthenticatedCall
 	tpl, err := tr.toTemplate()
 	if err != nil {
 		return env.CreateRequest{}, badRequest("%s", err)
+	}
+
+	if req.Template.Inline != nil {
+		tpl.Name, tpl.Version = inlineIdentity(tr)
 	}
 
 	if req.Workload == "" {

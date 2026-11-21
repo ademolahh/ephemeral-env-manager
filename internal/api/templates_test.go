@@ -234,3 +234,27 @@ func TestCreateEnvTemplateErrors(t *testing.T) {
 		t.Errorf("environments = %d, want 0", n)
 	}
 }
+
+func TestInlineTemplatesCanBeDisabled(t *testing.T) {
+	s := newServer(t)
+	s.handler = Routes(NewHandler(s.tx, s.m, s.sessions, nil, WithoutInlineTemplates()))
+	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
+
+	rec := s.post(t, key, withBody(t, func(map[string]any) {}), nil)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "inline templates are disabled") {
+		t.Errorf("inline create = %d %s, want 400 inline templates are disabled", rec.Code, rec.Body)
+	}
+}
+
+func TestInlineTemplateVersionTracksSpec(t *testing.T) {
+	base := templateRequest{TTL: "1h"}
+	base.Name, base.Version = "app", "v1"
+	changed := base
+	changed.TTL = "2h"
+
+	name, v1 := inlineIdentity(base)
+	_, v2 := inlineIdentity(changed)
+	if name != "inline:app" || v1 == v2 || !strings.HasPrefix(v1, "sha256:") {
+		t.Errorf("inlineIdentity = %s %s and %s, want inline:app with versions that differ by spec", name, v1, v2)
+	}
+}
