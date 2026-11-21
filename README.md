@@ -87,7 +87,7 @@ make admin ARGS="-username admin"                 # prompts for a password
 make api-key                                      # a caller and key; ARGS="-role agent" for an agent key
 ```
 
-The dashboard is at http://localhost:8080. GitHub sign-in works once `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are set.
+The `make` helpers run in a one-off `tools` container on the compose network, so they need no Go toolchain or database port. The dashboard is at http://localhost:8080. GitHub sign-in works once `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are set.
 
 ## Walkthrough
 
@@ -181,7 +181,7 @@ The agent gets `create_environment`, `get_environment`, `list_environments`, `ex
 EEM runs images that callers choose and lets them run commands inside, so isolation and limits matter:
 
 - **Containers** run with `no-new-privileges`, a process limit (`DOCKER_PIDS_LIMIT`, default 1024), CPU and memory limits with no extra swap, capped logs, and without `NET_RAW`, `MKNOD`, `AUDIT_WRITE` and `SETFCAP`. Disk is reserved and priced, and enforced per container when `DOCKER_DISK_QUOTA=true` (this needs overlay2 on xfs with `pquota`).
-- **Control-plane services** run as the distroless nonroot user with a read-only root filesystem and no capabilities. Postgres, Redis and the admin ports bind to localhost, and Redis needs a password.
+- **Control-plane services** run as the distroless nonroot user with a read-only root filesystem and no capabilities. Postgres and Redis publish no host ports, the admin ports bind to localhost, and Redis needs a password.
 - **Credentials:** API keys and session tokens are random 256-bit values stored only as SHA-256 hashes. Admin passwords use bcrypt. GitHub sign-in uses OAuth with state and PKCE. Cross-origin form posts are rejected.
 - **Templates:** admins own the catalog. Inline templates are labeled `inline:<name>` with a hash of their spec, and `INLINE_TEMPLATES=false` turns them off.
 
@@ -221,11 +221,12 @@ Everything is set through environment variables; [.env.example](.env.example) li
 ## Development
 
 ```sh
-make test    # starts Postgres and Redis in compose, then runs every test with -race
-make lint    # golangci-lint
+make test           # starts a throwaway Postgres and Redis (compose.test.yaml), then runs every test with -race
+make test-db-down   # stops them
+make lint           # golangci-lint
 ```
 
-Integration tests run against real Postgres, Redis and Docker. Each test gets its own schema or a rolled-back transaction, so they run in parallel. CI starts the same services and sets `TEST_REQUIRE_ALL=1`, so a test that would skip for a missing dependency fails instead.
+Integration tests run against real Postgres, Redis and Docker. The test databases are separate from the dev stack, keep their data in tmpfs and listen on loopback only. Each test gets its own schema or a rolled-back transaction, so they run in parallel. CI starts the same services and sets `TEST_REQUIRE_ALL=1`, so a test that would skip for a missing dependency fails instead.
 
 Schema changes go in a new numbered migration in [migrations/](migrations/), applied by `migrate` in compose. `make migrate-new name=…` creates one.
 

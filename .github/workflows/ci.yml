@@ -63,3 +63,4 @@ jobs:
       - run: docker build --target eem -t eem .
       - run: docker build --target worker -t eem-worker .
       - run: docker build --target proxy -t eem-proxy .
+      - run: docker build --target tools -t eem-tools .
