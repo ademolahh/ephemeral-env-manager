@@ -1,15 +1,19 @@
 -include .env
 
-DATABASE_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:5432/$(POSTGRES_DB)?sslmode=disable
+POSTGRES_PORT ?= 5432
+REDIS_PORT ?= 6379
+DATABASE_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
 MIGRATIONS_DIR := migrations
 TEST_DB := $(POSTGRES_DB)_test
-TEST_DATABASE_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:5432/$(TEST_DB)?sslmode=disable
-TEST_REDIS_URL ?= redis://localhost:6379/1
+TEST_DATABASE_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(TEST_DB)?sslmode=disable
+TEST_REDIS_URL ?= redis://:$(REDIS_PASSWORD)@localhost:$(REDIS_PORT)/1
 TEST_DOCKER ?= 1
+# make test starts every dependency, so a skipped test is a failure.
+TEST_REQUIRE_ALL ?= 1
 
-export TEST_DATABASE_URL TEST_REDIS_URL TEST_DOCKER
+export TEST_DATABASE_URL TEST_REDIS_URL TEST_DOCKER TEST_REQUIRE_ALL
 
-.PHONY: migrate-up migrate-down migrate-new api-key admin seed-docker test test-db
+.PHONY: migrate-up migrate-down migrate-new api-key admin seed-docker test test-db lint
 
 migrate-up:
 	migrate -path $(MIGRATIONS_DIR) -database "$(DATABASE_URL)" up
@@ -32,6 +36,9 @@ seed-docker:
 
 test: test-db
 	go test -race -count=1 ./...
+
+lint:
+	golangci-lint run ./...
 
 test-db:
 	@docker compose up -d --wait postgres redis

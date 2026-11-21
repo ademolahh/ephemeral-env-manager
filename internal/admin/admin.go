@@ -104,13 +104,16 @@ func Serve(ctx context.Context, addr string, checks map[string]Check) error {
 // images are distroless with no curl, so container healthchecks run the
 // service binary with -healthcheck, which calls this.
 func Probe(addr string) error {
-	_, port, err := net.SplitHostPort(addr)
+	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("admin addr %q: %w", addr, err)
 	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get("http://" + net.JoinHostPort("127.0.0.1", port) + "/readyz")
+	resp, err := client.Get("http://" + net.JoinHostPort(host, port) + "/readyz")
 	if err != nil {
 		return err
 	}
