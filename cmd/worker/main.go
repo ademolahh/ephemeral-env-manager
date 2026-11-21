@@ -53,7 +53,11 @@ func main() {
 		logging.Fatal("proxy", err)
 	}
 
-	var dockerOpts []docker.Option
+	dockerOpts, err := docker.OptionsFromEnv()
+	if err != nil {
+		logging.Fatal("docker", err)
+	}
+
 	var envOpts []env.Option
 	if px != nil {
 		dockerOpts = append(dockerOpts, docker.WithProxy(px.Container))

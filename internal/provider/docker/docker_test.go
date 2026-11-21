@@ -146,6 +146,23 @@ func TestCreate(t *testing.T) {
 	if sc.HostConfig.Memory != 256<<20 {
 		t.Errorf("service Memory = %d, want %d", sc.HostConfig.Memory, 256<<20)
 	}
+	for name, hc := range map[string]*container.HostConfig{"workload": wc.HostConfig, "service": sc.HostConfig} {
+		if hc.PidsLimit == nil || *hc.PidsLimit != DefaultPidsLimit {
+			t.Errorf("%s PidsLimit = %v, want %d", name, hc.PidsLimit, DefaultPidsLimit)
+		}
+		if !slices.Contains(hc.SecurityOpt, "no-new-privileges:true") {
+			t.Errorf("%s SecurityOpt = %v, want no-new-privileges", name, hc.SecurityOpt)
+		}
+		if !slices.Contains(hc.CapDrop, "NET_RAW") && !slices.Contains(hc.CapDrop, "CAP_NET_RAW") {
+			t.Errorf("%s CapDrop = %v, want NET_RAW dropped", name, hc.CapDrop)
+		}
+		if hc.MemorySwap != hc.Memory {
+			t.Errorf("%s MemorySwap = %d, want %d (no swap beyond the memory limit)", name, hc.MemorySwap, hc.Memory)
+		}
+		if hc.LogConfig.Config["max-size"] == "" {
+			t.Errorf("%s LogConfig = %+v, want a size cap", name, hc.LogConfig)
+		}
+	}
 	if !slices.Contains(sc.Config.Env, "CACHE_MODE=test") {
 		t.Errorf("service env missing CACHE_MODE=test")
 	}
@@ -488,5 +505,39 @@ func TestStatus(t *testing.T) {
 	}
 	if got, err := d.Status(ctx, id); err != nil || got != provider.StatusMissing {
 		t.Errorf("Status() after delete = %s, %v, want missing", got, err)
+	}
+}
+
+func TestHostConfigDiskQuota(t *testing.T) {
+	res := provider.Resources{CPUMillis: 500, RAMMB: 256, DiskGB: 5}
+
+	if hc := (&Docker{pidsLimit: DefaultPidsLimit}).hostConfig("net", res); hc.StorageOpt != nil {
+		t.Errorf("StorageOpt = %v without disk quota, want none", hc.StorageOpt)
+	}
+
+	hc := (&Docker{pidsLimit: DefaultPidsLimit, diskQuota: true}).hostConfig("net", res)
+	if hc.StorageOpt["size"] != "5G" {
+		t.Errorf("StorageOpt = %v, want size 5G", hc.StorageOpt)
+	}
+}
+
+func TestOptionsFromEnv(t *testing.T) {
+	t.Setenv("DOCKER_PIDS_LIMIT", "64")
+	t.Setenv("DOCKER_DISK_QUOTA", "true")
+	opts, err := OptionsFromEnv()
+	if err != nil {
+		t.Fatalf("OptionsFromEnv() error = %v", err)
+	}
+	d := &Docker{}
+	for _, o := range opts {
+		o(d)
+	}
+	if d.pidsLimit != 64 || !d.diskQuota {
+		t.Errorf("options = pids %d, disk quota %v, want 64 and true", d.pidsLimit, d.diskQuota)
+	}
+
+	t.Setenv("DOCKER_PIDS_LIMIT", "0")
+	if _, err := OptionsFromEnv(); err == nil {
+		t.Error("OptionsFromEnv() with DOCKER_PIDS_LIMIT=0 error = nil, want error")
 	}
 }

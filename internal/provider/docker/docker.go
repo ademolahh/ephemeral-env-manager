@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"strconv"
 	"sync"
@@ -28,9 +29,20 @@ const (
 
 var ErrUnlimitedResources = errors.New("cpu and ram limits are below the minimum, and docker treats 0 as unlimited")
 
+// DefaultPidsLimit caps processes per container so a fork bomb in one
+// environment cannot exhaust the host.
+const DefaultPidsLimit = 1024
+
+// droppedCaps are removed from Docker's default capability set. Workloads
+// rarely need raw sockets, device nodes, audit writes or file capabilities,
+// and dropping more (CHOWN, SETUID, ...) breaks common images such as postgres.
+var droppedCaps = []string{"NET_RAW", "MKNOD", "AUDIT_WRITE", "SETFCAP"}
+
 type Docker struct {
-	cli   *client.Client
-	proxy string
+	cli       *client.Client
+	proxy     string
+	pidsLimit int64
+	diskQuota bool
 }
 
 type Option func(*Docker)
@@ -39,13 +51,25 @@ func WithProxy(container string) Option {
 	return func(d *Docker) { d.proxy = container }
 }
 
+// WithPidsLimit sets the per-container process limit.
+func WithPidsLimit(n int64) Option {
+	return func(d *Docker) { d.pidsLimit = n }
+}
+
+// WithDiskQuota limits each container's writable layer to its disk_gb. It
+// needs the overlay2 storage driver on xfs mounted with pquota, so it is off
+// by default; without it disk_gb is reserved and priced but not enforced.
+func WithDiskQuota() Option {
+	return func(d *Docker) { d.diskQuota = true }
+}
+
 func New(opts ...Option) (*Docker, error) {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
 
-	d := &Docker{cli: cli}
+	d := &Docker{cli: cli, pidsLimit: DefaultPidsLimit}
 	for _, opt := range opts {
 		opt(d)
 	}
@@ -275,13 +299,9 @@ func (d *Docker) run(ctx context.Context, name, net string, aliases []string, cf
 	}
 
 	created, err := d.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Name:   "eem-" + name,
-		Config: cfg,
-		HostConfig: &container.HostConfig{
-			NetworkMode: container.NetworkMode(net),
-			NanoCPUs:    int64(res.CPUMillis) * 1e6,
-			Memory:      int64(res.RAMMB) << 20,
-		},
+		Name:       "eem-" + name,
+		Config:     cfg,
+		HostConfig: d.hostConfig(net, res),
 		NetworkingConfig: &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
 				net: {Aliases: aliases},
@@ -298,6 +318,29 @@ func (d *Docker) run(ctx context.Context, name, net string, aliases []string, cf
 	}
 
 	return created.ID, nil
+}
+
+func (d *Docker) hostConfig(net string, res provider.Resources) *container.HostConfig {
+	hc := &container.HostConfig{
+		NetworkMode: container.NetworkMode(net),
+		CapDrop:     droppedCaps,
+		SecurityOpt: []string{"no-new-privileges:true"},
+		LogConfig: container.LogConfig{
+			Type:   "json-file",
+			Config: map[string]string{"max-size": "10m", "max-file": "3"},
+		},
+		Resources: container.Resources{
+			NanoCPUs:   int64(res.CPUMillis) * 1e6,
+			Memory:     int64(res.RAMMB) << 20,
+			MemorySwap: int64(res.RAMMB) << 20,
+			PidsLimit:  &d.pidsLimit,
+		},
+	}
+
+	if d.diskQuota {
+		hc.StorageOpt = map[string]string{"size": strconv.Itoa(res.DiskGB) + "G"}
+	}
+	return hc
 }
 
 func (d *Docker) ensureImage(ctx context.Context, image string) error {
@@ -481,4 +524,28 @@ func envList(env map[string]string) []string {
 		list = append(list, k+"="+env[k])
 	}
 	return list
+}
+
+// OptionsFromEnv reads DOCKER_PIDS_LIMIT (a positive process count) and
+// DOCKER_DISK_QUOTA (true to enforce disk_gb, see WithDiskQuota).
+func OptionsFromEnv() ([]Option, error) {
+	var opts []Option
+	if v := os.Getenv("DOCKER_PIDS_LIMIT"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("DOCKER_PIDS_LIMIT %q must be a positive number", v)
+		}
+		opts = append(opts, WithPidsLimit(n))
+	}
+
+	if v := os.Getenv("DOCKER_DISK_QUOTA"); v != "" {
+		on, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("DOCKER_DISK_QUOTA %q must be true or false", v)
+		}
+		if on {
+			opts = append(opts, WithDiskQuota())
+		}
+	}
+	return opts, nil
 }
