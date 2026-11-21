@@ -3,7 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -86,7 +86,7 @@ func (h *Handler) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.github.User(r.Context(), q.Get("code"), verifier)
 	if err != nil {
-		log.Printf("github login: %v", err)
+		slog.Error("github login", "err", err)
 		loginFailed(w, r, "github")
 		return
 	}
@@ -94,7 +94,7 @@ func (h *Handler) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 	if !h.github.Allowed(user.Login) {
 		exists, err := db.GithubCallerExists(r.Context(), h.db, user.ID)
 		if err != nil {
-			log.Printf("github login: %v", err)
+			slog.Error("github login", "err", err)
 			loginFailed(w, r, "internal")
 			return
 		}
@@ -114,14 +114,14 @@ func (h *Handler) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 		BudgetExpiresAt: time.Now().Add(defaultBudgetPeriod).UTC().Truncate(time.Second),
 	})
 	if err != nil {
-		log.Printf("github login: %v", err)
+		slog.Error("github login", "err", err)
 		loginFailed(w, r, "internal")
 		return
 	}
 
 	token, expiresAt, err := h.sessions.CreateCaller(r.Context(), callerID, callerSessionTTL)
 	if err != nil {
-		log.Printf("github login: %v", err)
+		slog.Error("github login", "err", err)
 		loginFailed(w, r, "internal")
 		return
 	}

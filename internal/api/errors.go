@@ -3,7 +3,7 @@ package api
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
@@ -13,7 +13,7 @@ import (
 func writeServiceError(w http.ResponseWriter, op string, err error) {
 	status, code := classify(err)
 	if status == http.StatusInternalServerError {
-		log.Printf("%s: %v", op, err)
+		slog.Error("request failed", "op", op, "err", err)
 		writeErrorCode(w, status, code, "internal error")
 		return
 	}

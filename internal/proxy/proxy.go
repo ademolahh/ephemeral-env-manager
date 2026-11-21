@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -88,7 +88,7 @@ func (p *Proxy) Handler(q db.DBTX) http.Handler {
 			r.SetXForwarded()
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("proxy %s: %v", r.Host, err)
+			slog.Warn("proxy backend unavailable", "host", r.Host, "err", err)
 			http.Error(w, "environment unavailable", http.StatusBadGateway)
 		},
 	}
@@ -107,7 +107,7 @@ func (p *Proxy) Handler(q db.DBTX) http.Handler {
 		}
 
 		if err != nil {
-			log.Printf("proxy %s: %v", r.Host, err)
+			slog.Error("proxy route lookup", "host", r.Host, "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}

@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -53,7 +53,7 @@ func (h *Handler) authenticate(next http.Handler) http.Handler {
 		}
 
 		if !errors.Is(err, session.ErrNotFound) {
-			log.Printf("authenticate session: %v", err)
+			slog.Error("authenticate session", "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
@@ -65,7 +65,7 @@ func (h *Handler) authenticate(next http.Handler) http.Handler {
 		}
 
 		if err != nil {
-			log.Printf("authenticate: %v", err)
+			slog.Error("authenticate api key", "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
@@ -88,7 +88,7 @@ func (h *Handler) authenticateSession(w http.ResponseWriter, r *http.Request, ne
 	}
 
 	if err != nil {
-		log.Printf("authenticate session: %v", err)
+		slog.Error("authenticate session", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}

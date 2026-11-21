@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"slices"
 	"sync"
 	"time"
@@ -108,7 +108,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (db.Environment
 	for _, id := range r.preempted {
 		m.wg.Go(func() {
 			if err := m.Teardown(bg, db.Environment{ID: id, Provider: pt}); err != nil {
-				log.Print(err)
+				slog.Error("tear down preempted environment", "env", id, "err", err)
 			}
 		})
 	}
@@ -153,7 +153,7 @@ func (m *Manager) withStatus(ctx context.Context, e db.Environment) (db.Environm
 
 	status, err := p.Status(ctx, e.ID.String())
 	if err != nil {
-		log.Printf("status of environment %s: %v", e.ID, err)
+		slog.Warn("environment status", "env", e.ID, "err", err)
 		return e, provider.StatusUnknown, nil
 	}
 
@@ -253,7 +253,7 @@ func (m *Manager) Remove(ctx context.Context, e db.Environment) (db.Environment,
 		bg := context.WithoutCancel(ctx)
 		m.wg.Go(func() {
 			if err := m.Teardown(bg, e); err != nil {
-				log.Print(err)
+				slog.Error("tear down environment", "env", e.ID, "err", err)
 			}
 		})
 	}
@@ -421,7 +421,7 @@ func (m *Manager) checkProvisioned(id uuid.UUID) bool {
 	ctx := context.Background()
 	e, err := db.GetEnvironment(ctx, m.db, id)
 	if err != nil {
-		log.Printf("check environment %s: %v", id, err)
+		slog.Error("check environment readiness", "env", id, "err", err)
 		return false
 	}
 
@@ -439,14 +439,14 @@ func (m *Manager) checkProvisioned(id uuid.UUID) bool {
 
 	if status != provider.StatusRunning {
 		if err := p.Delete(ctx, id.String()); err != nil {
-			log.Printf("remove environment %s: %v", id, err)
+			slog.Error("remove environment", "env", id, "err", err)
 		}
 		m.fail(ctx, id, fmt.Sprintf("environment did not become ready: instance %s", status))
 		return true
 	}
 
 	if err := db.MarkEnvironmentRunning(ctx, m.db, id, m.backend(ctx, p, id)); err != nil {
-		log.Printf("mark environment %s running: %v", id, err)
+		slog.Error("mark environment running", "env", id, "err", err)
 	}
 	return true
 }
@@ -458,16 +458,16 @@ func (m *Manager) backend(ctx context.Context, p provider.Provider, id uuid.UUID
 
 	addr, err := p.Address(ctx, id.String())
 	if err != nil {
-		log.Printf("route environment %s: %v", id, err)
+		slog.Warn("route environment", "env", id, "err", err)
 	}
 
 	return addr
 }
 
 func (m *Manager) fail(ctx context.Context, id uuid.UUID, reason string) {
-	log.Printf("provision environment %s: %s", id, reason)
+	slog.Warn("provisioning failed", "env", id, "reason", reason)
 	if err := db.MarkEnvironmentFailed(ctx, m.db, id, reason); err != nil {
-		log.Printf("mark environment %s failed: %v", id, err)
+		slog.Error("mark environment failed", "env", id, "err", err)
 	}
 }
 

@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,21 +11,26 @@ import (
 	"time"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
+	"github.com/ademolahh/ephemeral-env-manager/internal/logging"
 	"github.com/ademolahh/ephemeral-env-manager/internal/proxy"
 )
 
 func main() {
+	if err := logging.Setup("proxy"); err != nil {
+		logging.Fatal("logging", err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
-		log.Fatal("DATABASE_URL is required")
+		logging.Fatal("DATABASE_URL is required", nil)
 	}
 
 	domain := os.Getenv("PROXY_DOMAIN")
 	if domain == "" {
-		log.Fatal("PROXY_DOMAIN is required")
+		logging.Fatal("PROXY_DOMAIN is required", nil)
 	}
 
 	addr := os.Getenv("PROXY_LISTEN_ADDR")
@@ -35,7 +40,7 @@ func main() {
 
 	pool, err := db.New(ctx, databaseURL)
 	if err != nil {
-		log.Fatalf("database: %v", err)
+		logging.Fatal("database", err)
 	}
 	defer pool.Close()
 
@@ -47,16 +52,16 @@ func main() {
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("listen: %v", err)
+			logging.Fatal("listen", err)
 		}
 	}()
-	log.Printf("proxy listening on %s for *.%s", addr, domain)
+	slog.Info("proxy listening", "addr", addr, "domain", domain)
 
 	<-ctx.Done()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("shutdown: %v", err)
+		slog.Error("shutdown", "err", err)
 	}
 }

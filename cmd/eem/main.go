@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,6 +15,7 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/auth"
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/env"
+	"github.com/ademolahh/ephemeral-env-manager/internal/logging"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider/docker"
 	"github.com/ademolahh/ephemeral-env-manager/internal/proxy"
@@ -22,39 +23,43 @@ import (
 )
 
 func main() {
+	if err := logging.Setup("eem"); err != nil {
+		logging.Fatal("logging", err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
-		log.Fatal("DATABASE_URL is required")
+		logging.Fatal("DATABASE_URL is required", nil)
 	}
 
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL == "" {
-		log.Fatal("REDIS_URL is required")
+		logging.Fatal("REDIS_URL is required", nil)
 	}
 
 	github, err := githubFromEnv()
 	if err != nil {
-		log.Fatalf("github: %v", err)
+		logging.Fatal("github", err)
 	}
 
 	pool, err := db.New(ctx, databaseURL)
 	if err != nil {
-		log.Fatalf("database: %v", err)
+		logging.Fatal("database", err)
 	}
 	defer pool.Close()
 
 	rdb, err := session.Connect(ctx, redisURL)
 	if err != nil {
-		log.Fatalf("redis: %v", err)
+		logging.Fatal("redis", err)
 	}
 	defer rdb.Close()
 
 	px, err := proxy.FromEnv()
 	if err != nil {
-		log.Fatalf("proxy: %v", err)
+		logging.Fatal("proxy", err)
 	}
 
 	var dockerOpts []docker.Option
@@ -66,11 +71,11 @@ func main() {
 
 	d, err := docker.New(dockerOpts...)
 	if err != nil {
-		log.Fatalf("docker: %v", err)
+		logging.Fatal("docker", err)
 	}
 
 	if err := d.Ping(ctx); err != nil {
-		log.Fatalf("docker: %v", err)
+		logging.Fatal("docker", err)
 	}
 
 	envs := env.NewManager(pool, map[provider.Type]provider.Provider{provider.Docker: d}, envOpts...)
@@ -83,20 +88,20 @@ func main() {
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("listen: %v", err)
+			logging.Fatal("listen", err)
 		}
 	}()
-	log.Printf("eem listening on %s", srv.Addr)
+	slog.Info("eem listening", "addr", srv.Addr)
 
 	<-ctx.Done()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("shutdown: %v", err)
+		slog.Error("shutdown", "err", err)
 	}
 
-	log.Print("waiting for in-flight provisioning")
+	slog.Info("waiting for in-flight provisioning")
 	envs.Wait()
 }
 

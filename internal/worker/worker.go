@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -60,7 +60,7 @@ func (w *Worker) loop(ctx context.Context, t task) {
 
 	for {
 		if err := t.run(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("%s: %v", t.name, err)
+			slog.Error("worker task failed", "task", t.name, "err", err)
 		}
 
 		select {
@@ -117,7 +117,7 @@ func (w *Worker) markDeleting(ctx context.Context, e db.Environment, reason stri
 	if _, err := w.envs.MarkDeleting(ctx, e); err != nil {
 		return fmt.Errorf("environment %s: %w", e.ID, err)
 	}
-	log.Printf("environment %s %s, deleting", e.ID, reason)
+	slog.Info("deleting environment", "env", e.ID, "reason", reason)
 	return nil
 }
 
@@ -135,7 +135,7 @@ func (w *Worker) resolveStuck(ctx context.Context) error {
 			continue
 		}
 		if status != "" {
-			log.Printf("environment %s stuck in PROVISIONING, marked %s", e.ID, status)
+			slog.Warn("resolved environment stuck in PROVISIONING", "env", e.ID, "status", status)
 		}
 	}
 	return errors.Join(errs...)
@@ -153,7 +153,7 @@ func (w *Worker) teardownDeleting(ctx context.Context) error {
 			errs = append(errs, err)
 			continue
 		}
-		log.Printf("environment %s deleted", e.ID)
+		slog.Info("environment deleted", "env", e.ID)
 	}
 	return errors.Join(errs...)
 }
@@ -161,7 +161,7 @@ func (w *Worker) teardownDeleting(ctx context.Context) error {
 func (w *Worker) removeOrphans(ctx context.Context) error {
 	removed, err := w.envs.RemoveOrphans(ctx)
 	for _, id := range removed {
-		log.Printf("environment %s had leftover resources with no active record, removed", id)
+		slog.Warn("removed leftover resources with no active record", "env", id)
 	}
 	return err
 }

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -116,7 +116,7 @@ func (h *Handler) verifyMCPToken(ctx context.Context, token string, _ *http.Requ
 	}
 
 	if err != nil {
-		log.Printf("mcp authenticate: %v", err)
+		slog.Error("mcp authenticate", "err", err)
 		return nil, errors.New("internal error")
 	}
 
@@ -134,7 +134,7 @@ func mcpCaller(req *mcp.CallToolRequest) (db.AuthenticatedCaller, error) {
 
 func toolError(op string, err error) error {
 	if errorStatus(err) == http.StatusInternalServerError {
-		log.Printf("mcp %s: %v", op, err)
+		slog.Error("mcp tool failed", "op", op, "err", err)
 		return errors.New("internal error")
 	}
 	return err
