@@ -329,12 +329,10 @@ func (d *Docker) hostConfig(net string, res provider.Resources) *container.HostC
 			Type:   "json-file",
 			Config: map[string]string{"max-size": "10m", "max-file": "3"},
 		},
-		Resources: container.Resources{
-			NanoCPUs:   int64(res.CPUMillis) * 1e6,
-			Memory:     int64(res.RAMMB) << 20,
-			MemorySwap: int64(res.RAMMB) << 20,
-			PidsLimit:  &d.pidsLimit,
-		},
+		NanoCPUs:   int64(res.CPUMillis) * 1e6,
+		Memory:     int64(res.RAMMB) << 20,
+		MemorySwap: int64(res.RAMMB) << 20,
+		PidsLimit:  &d.pidsLimit,
 	}
 
 	if d.diskQuota {
