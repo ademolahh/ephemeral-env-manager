@@ -58,7 +58,7 @@ func TestCreateDocker(t *testing.T) {
 	tx, callerID := setup(t)
 	ctx := context.Background()
 
-	d, err := docker.New()
+	d, err := docker.New(docker.WithInstance("test-" + uuid.NewString()))
 	if err != nil {
 		t.Fatalf("docker.New() error = %v", err)
 	}
@@ -116,7 +116,7 @@ func TestCreateDockerFailure(t *testing.T) {
 	tx, callerID := setup(t)
 	ctx := context.Background()
 
-	d, err := docker.New()
+	d, err := docker.New(docker.WithInstance("test-" + uuid.NewString()))
 	if err != nil {
 		t.Fatalf("docker.New() error = %v", err)
 	}

@@ -22,7 +22,9 @@ const testImage = "redis:7-alpine"
 func testDocker(t *testing.T) *Docker {
 	t.Helper()
 	dbtest.RequireDocker(t)
-	d, err := New()
+	// A unique instance keeps tests from listing or removing containers that
+	// belong to other tests or to an EEM stack on the same host.
+	d, err := New(WithInstance("test-" + uuid.NewString()))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -373,7 +375,7 @@ func TestList(t *testing.T) {
 	if _, err := d.cli.NetworkCreate(ctx, networkName(networkOnly), client.NetworkCreateOptions{
 		Driver:   "bridge",
 		Internal: true,
-		Labels:   map[string]string{envLabel: networkOnly},
+		Labels:   map[string]string{envLabel: networkOnly, instanceLabel: d.instance},
 	}); err != nil {
 		t.Fatalf("create network: %v", err)
 	}
@@ -539,5 +541,35 @@ func TestOptionsFromEnv(t *testing.T) {
 	t.Setenv("DOCKER_PIDS_LIMIT", "0")
 	if _, err := OptionsFromEnv(); err == nil {
 		t.Error("OptionsFromEnv() with DOCKER_PIDS_LIMIT=0 error = nil, want error")
+	}
+}
+
+func TestInstancesIgnoreEachOther(t *testing.T) {
+	mine, theirs := testDocker(t), testDocker(t)
+	ctx := context.Background()
+	id := newEnvID(t, theirs)
+
+	if _, err := theirs.Create(ctx, id, testImage, provider.Template{
+		Workload: provider.Workload{Resources: provider.Resources{CPUMillis: 100, RAMMB: 64}},
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	listed, err := mine.List(ctx)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if slices.Contains(listed, id) {
+		t.Errorf("List() = %v, want another instance's environment left out", listed)
+	}
+	if status, err := mine.Status(ctx, id); err != nil || status != provider.StatusMissing {
+		t.Errorf("Status() = %s, %v, want missing for another instance's environment", status, err)
+	}
+
+	if err := mine.Delete(ctx, id); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if status, err := theirs.Status(ctx, id); err != nil || status != provider.StatusRunning {
+		t.Errorf("owner Status() after another instance's Delete = %s, %v, want running", status, err)
 	}
 }

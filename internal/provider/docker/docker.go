@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	envLabel  = "eem.env"
-	portLabel = "eem.port"
-	nodeLabel = "eem.node"
+	envLabel      = "eem.env"
+	instanceLabel = "eem.instance"
+	portLabel     = "eem.port"
+	nodeLabel     = "eem.node"
 )
 
 var ErrUnlimitedResources = errors.New("cpu and ram limits are below the minimum, and docker treats 0 as unlimited")
@@ -38,11 +39,25 @@ const DefaultPidsLimit = 1024
 // and dropping more (CHOWN, SETUID, ...) breaks common images such as postgres.
 var droppedCaps = []string{"NET_RAW", "MKNOD", "AUDIT_WRITE", "SETFCAP"}
 
+// DefaultInstance names the EEM installation that owns containers when
+// EEM_INSTANCE is unset.
+const DefaultInstance = "eem"
+
 type Docker struct {
 	cli       *client.Client
 	proxy     string
 	pidsLimit int64
 	diskQuota bool
+	// instance labels every container and network this installation creates,
+	// so several installations can share a Docker host without treating each
+	// other's environments as orphans.
+	instance string
+}
+
+// WithInstance sets the installation name that scopes this provider's
+// containers and networks.
+func WithInstance(name string) Option {
+	return func(d *Docker) { d.instance = name }
 }
 
 type Option func(*Docker)
@@ -69,7 +84,7 @@ func New(opts ...Option) (*Docker, error) {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
 
-	d := &Docker{cli: cli, pidsLimit: DefaultPidsLimit}
+	d := &Docker{cli: cli, pidsLimit: DefaultPidsLimit, instance: DefaultInstance}
 	for _, opt := range opts {
 		opt(d)
 	}
@@ -106,7 +121,7 @@ func (d *Docker) Delete(ctx context.Context, id string) error {
 func (d *Docker) Status(ctx context.Context, id string) (provider.Status, error) {
 	list, err := d.cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: client.Filters{}.Add("label", envLabel+"="+id),
+		Filters: d.envFilter(id),
 	})
 	if err != nil {
 		return "", fmt.Errorf("status env %s: list containers: %w", id, err)
@@ -191,7 +206,7 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 }
 
 func (d *Docker) List(ctx context.Context) ([]string, error) {
-	filters := client.Filters{}.Add("label", envLabel)
+	filters := client.Filters{}.Add("label", envLabel, instanceLabel+"="+d.instance)
 	containers, err := d.cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: filters})
 	if err != nil {
 		return nil, fmt.Errorf("list envs: list containers: %w", err)
@@ -216,7 +231,7 @@ func (d *Docker) List(ctx context.Context) ([]string, error) {
 }
 
 func (d *Docker) create(ctx context.Context, id, workload string, temp provider.Template) (string, error) {
-	labels := map[string]string{envLabel: id}
+	labels := map[string]string{envLabel: id, instanceLabel: d.instance}
 	net := networkName(id)
 
 	if _, err := d.cli.NetworkCreate(ctx, net, client.NetworkCreateOptions{
@@ -359,10 +374,15 @@ func (d *Docker) ensureImage(ctx context.Context, image string) error {
 	return nil
 }
 
+// envFilter matches the containers of environment id that this instance owns.
+func (d *Docker) envFilter(id string) client.Filters {
+	return client.Filters{}.Add("label", envLabel+"="+id, instanceLabel+"="+d.instance)
+}
+
 func (d *Docker) cleanup(ctx context.Context, id string) error {
 	list, err := d.cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: client.Filters{}.Add("label", envLabel+"="+id),
+		Filters: d.envFilter(id),
 	})
 
 	if err != nil {
@@ -380,7 +400,18 @@ func (d *Docker) cleanup(ctx context.Context, id string) error {
 	}
 	wg.Wait()
 
-	if err := d.disconnectProxy(ctx, id); err != nil {
+	n, err := d.cli.NetworkInspect(ctx, networkName(id), client.NetworkInspectOptions{})
+	switch {
+	case cerrdefs.IsNotFound(err):
+		return errors.Join(errs...)
+	case err != nil:
+		return errors.Join(append(errs, fmt.Errorf("inspect network: %w", err))...)
+	case n.Network.Labels[instanceLabel] != d.instance:
+		// Another installation's network with the same environment id.
+		return errors.Join(errs...)
+	}
+
+	if err := d.disconnectProxy(ctx, id, n.Network.Containers); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -391,21 +422,12 @@ func (d *Docker) cleanup(ctx context.Context, id string) error {
 	return errors.Join(errs...)
 }
 
-func (d *Docker) disconnectProxy(ctx context.Context, id string) error {
+func (d *Docker) disconnectProxy(ctx context.Context, id string, attached map[string]network.EndpointResource) error {
 	if d.proxy == "" {
 		return nil
 	}
 
-	n, err := d.cli.NetworkInspect(ctx, networkName(id), client.NetworkInspectOptions{})
-	if cerrdefs.IsNotFound(err) {
-		return nil
-	}
-
-	if err != nil {
-		return fmt.Errorf("inspect network: %w", err)
-	}
-
-	for _, c := range n.Network.Containers {
+	for _, c := range attached {
 		if c.Name != d.proxy {
 			continue
 		}
@@ -524,10 +546,15 @@ func envList(env map[string]string) []string {
 	return list
 }
 
-// OptionsFromEnv reads DOCKER_PIDS_LIMIT (a positive process count) and
-// DOCKER_DISK_QUOTA (true to enforce disk_gb, see WithDiskQuota).
+// OptionsFromEnv reads EEM_INSTANCE (see WithInstance), DOCKER_PIDS_LIMIT (a
+// positive process count) and DOCKER_DISK_QUOTA (true to enforce disk_gb, see
+// WithDiskQuota).
 func OptionsFromEnv() ([]Option, error) {
 	var opts []Option
+	if v := os.Getenv("EEM_INSTANCE"); v != "" {
+		opts = append(opts, WithInstance(v))
+	}
+
 	if v := os.Getenv("DOCKER_PIDS_LIMIT"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || n < 1 {
