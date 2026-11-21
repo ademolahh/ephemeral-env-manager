@@ -1,3 +1,7 @@
 doc
 .env
-scripts/
+.vscode/
+
+# local REST-client scratch files; they hold credentials
+*.http
+scripts/api-test.sh
