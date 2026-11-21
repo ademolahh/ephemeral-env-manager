@@ -231,7 +231,7 @@ Schema changes go in a new numbered migration in [migrations/](migrations/), app
 
 ## Limitations and roadmap
 
-- **Docker on one host only.** Providers sit behind an interface (`Create`, `Delete`, `Status`, `Address`, `Exec`, `List`), but Docker is the only implementation. Kubernetes is next.
+- **Docker on one host only.** Providers sit behind an interface (`Create`, `Delete`, `Status`, `Address`, `Exec`, `List`), but Docker is the only implementation.
 - **One eem and one worker.** Provisioning and readiness checks run in eem's memory, and eem resumes them on restart. A second eem would see the first one's in-flight environments as missing. Worker loops are idempotent but have no leader election.
 - **Plain HTTP.** Put TLS termination in front of the proxy and eem.
 - **Exec isn't streaming.** It returns output when the command ends, capped at 1 MiB and 5 minutes.
