@@ -6,6 +6,8 @@ EEM creates short-lived, isolated environments on Docker for testing, reviewing 
 
 Humans use it through a REST API and a dashboard. AI agents use it through MCP: an agent can create a `PR_REVIEW` environment, run the test suite inside it with `exec` and tear it down, all within a budget a human set.
 
+![Signing in, opening an environment through the proxy and deleting another](docs/images/demo.gif)
+
 What it enforces:
 
 - **Priorities:** `PROD_BUG` > `PR_REVIEW` > `REGULAR_TESTING`. When the capacity pool is full, a higher type preempts lower ones.
@@ -155,6 +157,12 @@ When a check fails, the error has a stable code:
 
 Every endpoint, body and error code is in the [API reference](docs/api.md).
 
+### Dashboard
+
+Callers see their environments, budget and the capacity left in each pool. Admins manage callers, budgets, templates, capacity and prices.
+
+![Dashboard showing environments, cost budget and provider capacity](docs/images/dashboard.png)
+
 ### Agents over MCP
 
 Create an agent key (`make api-key ARGS="-role agent"`, or from the dashboard), then register the server with your MCP client, for example Claude Code:
@@ -215,6 +223,7 @@ Everything is set through environment variables; [.env.example](.env.example) li
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_ALLOWED_USERS`, `PUBLIC_URL` | eem | GitHub sign-in |
 | `INLINE_TEMPLATES` | eem | `false` allows stored templates only |
 | `DOCKER_PIDS_LIMIT`, `DOCKER_DISK_QUOTA` | eem, worker | Per-container limits |
+| `EEM_INSTANCE` | eem, worker | Scopes this installation's containers so several can share a Docker host; compose sets it to the project name |
 | `WORKER_INTERVAL` | worker | How often each reconcile loop runs (default `30s`) |
 | `ADMIN_ADDR`, `LOG_FORMAT`, `LOG_LEVEL` | all | Operational endpoints and logging |
 
