@@ -1,7 +1,4 @@
-# The services run as the distroless nonroot user with no capabilities and a
-# read-only root filesystem. eem and the worker reach the Docker socket through
-# DOCKER_GID: 0 on Docker Desktop, the host's docker group on Linux
-# (getent group docker | cut -d: -f3).
+# DOCKER_GID: 0 on Docker Desktop, the docker group on Linux (getent group docker | cut -d: -f3).
 x-hardened: &hardened
   read_only: true
   cap_drop: [ALL]
@@ -81,8 +78,7 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  # The proxy joins every environment's network, so it listens only on its
-  # edge address; workloads cannot reach its ports.
+  # Listens only on its edge address: it joins every environment's network.
   proxy:
     <<: *hardened
     build:
@@ -111,7 +107,6 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  # make admin, api-key and seed-docker run these on the compose network.
   tools:
     <<: *hardened
     build:

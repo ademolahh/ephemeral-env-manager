@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
@@ -65,8 +66,8 @@ func (f *fakeProvider) setStatus(id uuid.UUID, s provider.Status) {
 
 func (f *fakeProvider) Address(ctx context.Context, id string) (string, error) { return "", nil }
 
-func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (string, error) {
-	return "", nil
+func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (provider.ExecResult, error) {
+	return provider.ExecResult{}, nil
 }
 
 func (f *fakeProvider) List(ctx context.Context) ([]string, error) {
@@ -132,15 +133,20 @@ func newFixture(t *testing.T, q db.DBTX) fixture {
 func (f fixture) env(t *testing.T, p provider.Type, status db.EnvStatus, expired bool) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
-	id, err := db.CreateEnvironment(ctx, f.q, db.NewEnvironment{
-		CallerID:        f.callerID,
-		Type:            db.EnvRegularTesting,
-		Provider:        p,
-		Resources:       provider.Resources{CPUMillis: 1000, RAMMB: 1024, DiskGB: 1},
-		HourlyRate:      10000,
-		TTL:             time.Hour,
-		TemplateName:    "app",
-		TemplateVersion: "v1",
+	var id uuid.UUID
+	err := pgx.BeginFunc(ctx, f.q, func(tx pgx.Tx) error {
+		var err error
+		id, err = db.CreateEnvironment(ctx, tx, db.NewEnvironment{
+			CallerID:        f.callerID,
+			Type:            db.EnvRegularTesting,
+			Provider:        p,
+			Resources:       provider.Resources{CPUMillis: 1000, RAMMB: 1024, DiskGB: 1},
+			HourlyRate:      10000,
+			TTL:             time.Hour,
+			TemplateName:    "app",
+			TemplateVersion: "v1",
+		})
+		return err
 	})
 	if err != nil {
 		t.Fatalf("CreateEnvironment() error = %v", err)
@@ -217,7 +223,7 @@ func TestSweepNothingToRemove(t *testing.T) {
 
 func TestSweepContinuesPastErrors(t *testing.T) {
 	f := newFixture(t, dbtest.Tx(t))
-	unconfigured := f.env(t, provider.Cloud, db.EnvRunning, true)
+	unconfigured := f.env(t, provider.Type("other"), db.EnvRunning, true)
 	docker := f.env(t, provider.Docker, db.EnvRunning, true)
 
 	err := New(f.q, f.m, time.Minute).sweep(context.Background())

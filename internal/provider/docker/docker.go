@@ -30,66 +30,61 @@ const (
 
 var ErrUnlimitedResources = errors.New("cpu and ram limits are below the minimum, and docker treats 0 as unlimited")
 
-// DefaultPidsLimit caps processes per container so a fork bomb in one
-// environment cannot exhaust the host.
 const DefaultPidsLimit = 1024
 
-// droppedCaps are removed from Docker's default capability set. Workloads
-// rarely need raw sockets, device nodes, audit writes or file capabilities,
-// and dropping more (CHOWN, SETUID, ...) breaks common images such as postgres.
+// Dropping more (CHOWN, SETUID, ...) breaks common images such as postgres.
 var droppedCaps = []string{"NET_RAW", "MKNOD", "AUDIT_WRITE", "SETFCAP"}
 
-// DefaultInstance names the EEM installation that owns containers when
-// EEM_INSTANCE is unset.
 const DefaultInstance = "eem"
 
+type Config struct {
+	Proxy string
+	// Instance labels resources so installations sharing a Docker host ignore each other.
+	Instance  string
+	PidsLimit int64
+	// DiskQuota needs overlay2 on xfs mounted with pquota.
+	DiskQuota bool
+}
+
+func ConfigFromEnv() (Config, error) {
+	cfg := Config{Instance: os.Getenv("EEM_INSTANCE")}
+
+	if v := os.Getenv("DOCKER_PIDS_LIMIT"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 1 {
+			return Config{}, fmt.Errorf("DOCKER_PIDS_LIMIT %q must be a positive number", v)
+		}
+		cfg.PidsLimit = n
+	}
+
+	if v := os.Getenv("DOCKER_DISK_QUOTA"); v != "" {
+		on, err := strconv.ParseBool(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("DOCKER_DISK_QUOTA %q must be true or false", v)
+		}
+		cfg.DiskQuota = on
+	}
+	return cfg, nil
+}
+
 type Docker struct {
-	cli       *client.Client
-	proxy     string
-	pidsLimit int64
-	diskQuota bool
-	// instance labels every container and network this installation creates,
-	// so several installations can share a Docker host without treating each
-	// other's environments as orphans.
-	instance string
+	cli *client.Client
+	cfg Config
 }
 
-// WithInstance sets the installation name that scopes this provider's
-// containers and networks.
-func WithInstance(name string) Option {
-	return func(d *Docker) { d.instance = name }
-}
-
-type Option func(*Docker)
-
-func WithProxy(container string) Option {
-	return func(d *Docker) { d.proxy = container }
-}
-
-// WithPidsLimit sets the per-container process limit.
-func WithPidsLimit(n int64) Option {
-	return func(d *Docker) { d.pidsLimit = n }
-}
-
-// WithDiskQuota limits each container's writable layer to its disk_gb. It
-// needs the overlay2 storage driver on xfs mounted with pquota, so it is off
-// by default; without it disk_gb is reserved and priced but not enforced.
-func WithDiskQuota() Option {
-	return func(d *Docker) { d.diskQuota = true }
-}
-
-func New(opts ...Option) (*Docker, error) {
+func New(cfg Config) (*Docker, error) {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
 
-	d := &Docker{cli: cli, pidsLimit: DefaultPidsLimit, instance: DefaultInstance}
-	for _, opt := range opts {
-		opt(d)
+	if cfg.Instance == "" {
+		cfg.Instance = DefaultInstance
 	}
-
-	return d, nil
+	if cfg.PidsLimit == 0 {
+		cfg.PidsLimit = DefaultPidsLimit
+	}
+	return &Docker{cli: cli, cfg: cfg}, nil
 }
 
 func (d *Docker) Ping(ctx context.Context) error {
@@ -150,63 +145,68 @@ func (d *Docker) Address(ctx context.Context, id string) (string, error) {
 	return name + ":" + port, nil
 }
 
-func (d *Docker) Exec(ctx context.Context, id string, cmd []string) (string, error) {
-	if len(cmd) == 0 {
-		return "", fmt.Errorf("exec env %s: %w", id, provider.ErrEmptyCommand)
-	}
-
+func (d *Docker) Exec(ctx context.Context, id string, cmd []string) (provider.ExecResult, error) {
 	created, err := d.cli.ExecCreate(ctx, workloadName(id), client.ExecCreateOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
 	})
 	if err != nil {
-		return "", fmt.Errorf("exec env %s: create: %w", id, err)
+		return provider.ExecResult{}, fmt.Errorf("exec env %s: create: %w", id, err)
 	}
 
 	attached, err := d.cli.ExecAttach(ctx, created.ID, client.ExecAttachOptions{})
 	if err != nil {
-		return "", fmt.Errorf("exec env %s: attach: %w", id, err)
+		return provider.ExecResult{}, fmt.Errorf("exec env %s: attach: %w", id, err)
 	}
 	defer attached.Close()
 	defer context.AfterFunc(ctx, attached.Close)()
 
 	out := &cappedBuffer{max: maxExecOutput}
+	result := func() provider.ExecResult {
+		return provider.ExecResult{Output: out.String(), Truncated: out.truncated}
+	}
+
 	if _, err := stdcopy.StdCopy(out, out, attached.Reader); err != nil {
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
-		return out.String(), fmt.Errorf("exec env %s: read output: %w", id, err)
+		return result(), fmt.Errorf("exec env %s: read output: %w", id, err)
 	}
 
 	res, err := d.cli.ExecInspect(ctx, created.ID, client.ExecInspectOptions{})
 	if err != nil {
-		return out.String(), fmt.Errorf("exec env %s: inspect: %w", id, err)
+		return result(), fmt.Errorf("exec env %s: inspect: %w", id, err)
 	}
 
 	if res.ExitCode != 0 {
-		return out.String(), fmt.Errorf("exec env %s: %w", id, &provider.ExitError{Code: res.ExitCode})
+		return result(), fmt.Errorf("exec env %s: %w", id, &provider.ExitError{Code: res.ExitCode})
 	}
 
-	return out.String(), nil
+	return result(), nil
 }
 
 const maxExecOutput = 1 << 20
 
 type cappedBuffer struct {
 	bytes.Buffer
-	max int
+	max       int
+	truncated bool
 }
 
 func (b *cappedBuffer) Write(p []byte) (int, error) {
-	if room := b.max - b.Len(); room > 0 {
+	room := b.max - b.Len()
+	if len(p) > room {
+		b.truncated = true
+	}
+	if room > 0 {
 		b.Buffer.Write(p[:min(len(p), room)])
 	}
 	return len(p), nil
 }
 
 func (d *Docker) List(ctx context.Context) ([]string, error) {
-	filters := client.Filters{}.Add("label", envLabel, instanceLabel+"="+d.instance)
+	filters := client.Filters{}.Add("label", envLabel, instanceLabel+"="+d.cfg.Instance)
 	containers, err := d.cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: filters})
 	if err != nil {
 		return nil, fmt.Errorf("list envs: list containers: %w", err)
@@ -231,7 +231,7 @@ func (d *Docker) List(ctx context.Context) ([]string, error) {
 }
 
 func (d *Docker) create(ctx context.Context, id, workload string, temp provider.Template) (string, error) {
-	labels := map[string]string{envLabel: id, instanceLabel: d.instance}
+	labels := map[string]string{envLabel: id, instanceLabel: d.cfg.Instance}
 	net := networkName(id)
 
 	if _, err := d.cli.NetworkCreate(ctx, net, client.NetworkCreateOptions{
@@ -242,10 +242,10 @@ func (d *Docker) create(ctx context.Context, id, workload string, temp provider.
 		return "", fmt.Errorf("create network: %w", err)
 	}
 
-	if d.proxy != "" {
-		_, err := d.cli.NetworkConnect(ctx, net, client.NetworkConnectOptions{Container: d.proxy})
+	if d.cfg.Proxy != "" {
+		_, err := d.cli.NetworkConnect(ctx, net, client.NetworkConnectOptions{Container: d.cfg.Proxy})
 		if err != nil && !cerrdefs.IsPermissionDenied(err) {
-			return "", fmt.Errorf("connect proxy %s: %w", d.proxy, err)
+			return "", fmt.Errorf("connect proxy %s: %w", d.cfg.Proxy, err)
 		}
 	}
 
@@ -347,10 +347,10 @@ func (d *Docker) hostConfig(net string, res provider.Resources) *container.HostC
 		NanoCPUs:   int64(res.CPUMillis) * 1e6,
 		Memory:     int64(res.RAMMB) << 20,
 		MemorySwap: int64(res.RAMMB) << 20,
-		PidsLimit:  &d.pidsLimit,
+		PidsLimit:  &d.cfg.PidsLimit,
 	}
 
-	if d.diskQuota {
+	if d.cfg.DiskQuota {
 		hc.StorageOpt = map[string]string{"size": strconv.Itoa(res.DiskGB) + "G"}
 	}
 	return hc
@@ -374,9 +374,8 @@ func (d *Docker) ensureImage(ctx context.Context, image string) error {
 	return nil
 }
 
-// envFilter matches the containers of environment id that this instance owns.
 func (d *Docker) envFilter(id string) client.Filters {
-	return client.Filters{}.Add("label", envLabel+"="+id, instanceLabel+"="+d.instance)
+	return client.Filters{}.Add("label", envLabel+"="+id, instanceLabel+"="+d.cfg.Instance)
 }
 
 func (d *Docker) cleanup(ctx context.Context, id string) error {
@@ -406,8 +405,8 @@ func (d *Docker) cleanup(ctx context.Context, id string) error {
 		return errors.Join(errs...)
 	case err != nil:
 		return errors.Join(append(errs, fmt.Errorf("inspect network: %w", err))...)
-	case n.Network.Labels[instanceLabel] != d.instance:
-		// Another installation's network with the same environment id.
+	case n.Network.Labels[instanceLabel] != d.cfg.Instance:
+		// Another installation's network.
 		return errors.Join(errs...)
 	}
 
@@ -423,18 +422,18 @@ func (d *Docker) cleanup(ctx context.Context, id string) error {
 }
 
 func (d *Docker) disconnectProxy(ctx context.Context, id string, attached map[string]network.EndpointResource) error {
-	if d.proxy == "" {
+	if d.cfg.Proxy == "" {
 		return nil
 	}
 
 	for _, c := range attached {
-		if c.Name != d.proxy {
+		if c.Name != d.cfg.Proxy {
 			continue
 		}
 
-		_, err := d.cli.NetworkDisconnect(ctx, networkName(id), client.NetworkDisconnectOptions{Container: d.proxy, Force: true})
+		_, err := d.cli.NetworkDisconnect(ctx, networkName(id), client.NetworkDisconnectOptions{Container: d.cfg.Proxy, Force: true})
 		if err != nil && !cerrdefs.IsNotFound(err) {
-			return fmt.Errorf("disconnect proxy %s: %w", d.proxy, err)
+			return fmt.Errorf("disconnect proxy %s: %w", d.cfg.Proxy, err)
 		}
 	}
 
@@ -544,33 +543,4 @@ func envList(env map[string]string) []string {
 		list = append(list, k+"="+env[k])
 	}
 	return list
-}
-
-// OptionsFromEnv reads EEM_INSTANCE (see WithInstance), DOCKER_PIDS_LIMIT (a
-// positive process count) and DOCKER_DISK_QUOTA (true to enforce disk_gb, see
-// WithDiskQuota).
-func OptionsFromEnv() ([]Option, error) {
-	var opts []Option
-	if v := os.Getenv("EEM_INSTANCE"); v != "" {
-		opts = append(opts, WithInstance(v))
-	}
-
-	if v := os.Getenv("DOCKER_PIDS_LIMIT"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 1 {
-			return nil, fmt.Errorf("DOCKER_PIDS_LIMIT %q must be a positive number", v)
-		}
-		opts = append(opts, WithPidsLimit(n))
-	}
-
-	if v := os.Getenv("DOCKER_DISK_QUOTA"); v != "" {
-		on, err := strconv.ParseBool(v)
-		if err != nil {
-			return nil, fmt.Errorf("DOCKER_DISK_QUOTA %q must be true or false", v)
-		}
-		if on {
-			opts = append(opts, WithDiskQuota())
-		}
-	}
-	return opts, nil
 }

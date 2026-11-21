@@ -1,6 +1,6 @@
 CREATE TABLE capacity_pools (
     id                   uuid PRIMARY KEY,
-    provider             provider NOT NULL UNIQUE,
+    provider             text NOT NULL UNIQUE CHECK (provider <> ''),
     default_cpu_millis   integer NOT NULL CHECK (default_cpu_millis >= 0),
     default_ram_mb       integer NOT NULL CHECK (default_ram_mb >= 0),
     default_disk_gb      integer NOT NULL CHECK (default_disk_gb >= 0),

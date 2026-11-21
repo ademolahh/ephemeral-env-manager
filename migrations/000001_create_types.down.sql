@@ -1,4 +1,3 @@
-DROP TYPE IF EXISTS provider;
 DROP TYPE IF EXISTS env_status;
 DROP TYPE IF EXISTS env_type;
 DROP TYPE IF EXISTS caller_role;

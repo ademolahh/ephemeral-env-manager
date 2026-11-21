@@ -107,7 +107,7 @@ func TestCreateEnvironmentErrors(t *testing.T) {
 	}{
 		{name: "unknown caller", mutate: func(e *NewEnvironment) { e.CallerID = uuid.New() }, code: "23503"},
 		{name: "invalid type", mutate: func(e *NewEnvironment) { e.Type = "NOPE" }, code: "22P02"},
-		{name: "invalid provider", mutate: func(e *NewEnvironment) { e.Provider = "aws" }, code: "22P02"},
+		{name: "empty provider", mutate: func(e *NewEnvironment) { e.Provider = "" }, code: "23514"},
 		{name: "negative resources", mutate: func(e *NewEnvironment) { e.Resources.RAMMB = -1 }, code: "23514"},
 		{name: "negative hourly rate", mutate: func(e *NewEnvironment) { e.HourlyRate = -1 }, code: "23514"},
 	}

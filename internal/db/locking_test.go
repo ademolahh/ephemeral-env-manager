@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/dbtest"
@@ -42,7 +44,11 @@ func TestReleaseDoesNotDeadlockWithPreemption(t *testing.T) {
 		t.Fatalf("CreateCaller() error = %v", err)
 	}
 	e := newEnvironment(callerID)
-	id, err := CreateEnvironment(ctx, pool, e)
+	var id uuid.UUID
+	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		id, err = CreateEnvironment(ctx, tx, e)
+		return err
+	})
 	if err != nil {
 		t.Fatalf("CreateEnvironment() error = %v", err)
 	}
@@ -113,7 +119,11 @@ func TestRefundDoesNotDeadlockWithCreate(t *testing.T) {
 	}
 	e := newEnvironment(callerID)
 	e.EstimatedCost = 200
-	id, err := CreateEnvironment(ctx, pool, e)
+	var id uuid.UUID
+	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		id, err = CreateEnvironment(ctx, tx, e)
+		return err
+	})
 	if err != nil {
 		t.Fatalf("CreateEnvironment() error = %v", err)
 	}

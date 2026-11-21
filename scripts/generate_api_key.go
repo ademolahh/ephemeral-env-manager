@@ -13,12 +13,11 @@ import (
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/auth"
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
-	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
 func main() {
 	callerFlag := flag.String("caller-id", "", "existing caller UUID; omit to create a new caller")
-	expiresIn := flag.Duration("expires-in", 30*24*time.Hour, "API key validity (for example, 720h)")
+	expiresIn := flag.Duration("expires-in", db.DefaultKeyTTL, "API key validity (for example, 720h)")
 	role := flag.String("role", string(db.RoleUser), "key role: user or agent")
 	name := flag.String("name", "cli", "key name")
 	flag.Parse()
@@ -54,12 +53,7 @@ func main() {
 	key, hash := auth.GenerateAPIKey()
 	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
 		if callerID == uuid.Nil {
-			id, err := db.CreateCaller(ctx, tx, db.NewCaller{
-				PermittedEnv:    permitted,
-				Quota:           provider.Resources{CPUMillis: 5000, RAMMB: 16384, DiskGB: 50},
-				CostBudgetTotal: 10000,
-				BudgetExpiresAt: time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second),
-			})
+			id, err := db.CreateCaller(ctx, tx, db.DefaultCaller(permitted))
 			if err != nil {
 				return err
 			}

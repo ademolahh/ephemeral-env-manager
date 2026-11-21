@@ -23,8 +23,6 @@ const (
 	maxListLimit         = 100
 )
 
-var envStatuses = []db.EnvStatus{db.EnvProvisioning, db.EnvRunning, db.EnvDeleting, db.EnvDeleted, db.EnvFailed}
-
 type listEnvsResponse struct {
 	Environments []db.Environment     `json:"environments"`
 	Page         int                  `json:"page"`
@@ -70,7 +68,7 @@ func (h *Handler) createRequest(ctx context.Context, caller db.AuthenticatedCall
 		return env.CreateRequest{}, badRequest("Idempotency-Key longer than %d characters", maxIdempotencyKeyLen)
 	}
 
-	if req.Template.Inline != nil && h.noInline {
+	if req.Template.Inline != nil && h.DisableInlineTemplates {
 		return env.CreateRequest{}, badRequest("inline templates are disabled; use a stored template as name@version")
 	}
 
@@ -114,13 +112,7 @@ func (h *Handler) GetEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var e db.Environment
-	var status provider.Status
-	if _, admin := adminFrom(r.Context()); admin {
-		e, status, err = h.envs.GetAny(r.Context(), id)
-	} else {
-		e, status, err = h.envs.Get(r.Context(), callerFrom(r.Context()), id)
-	}
+	e, status, err := h.envs.Get(r.Context(), scope(r.Context()), id)
 	if err != nil {
 		writeServiceError(w, "get environment", err)
 		return
@@ -168,15 +160,11 @@ func (h *Handler) listEnvs(ctx context.Context, caller db.AuthenticatedCaller, s
 		resp.NextPage = page + 1
 	}
 
-	if resp.Environments == nil {
-		resp.Environments = []db.Environment{}
-	}
-
 	for i, e := range resp.Environments {
 		resp.Environments[i] = h.envs.Expose(e)
 	}
 
-	for _, s := range envStatuses {
+	for _, s := range db.EnvStatuses {
 		resp.Counts[s] = counts[s]
 		resp.Total += counts[s]
 	}
@@ -186,22 +174,52 @@ func (h *Handler) listEnvs(ctx context.Context, caller db.AuthenticatedCaller, s
 
 func parseListParams(r *http.Request) (db.EnvStatus, int, int, error) {
 	q := r.URL.Query()
-	status, err := envStatus(q.Get("status"))
+	page, err := intParam(q.Get("page"), "page")
 	if err != nil {
 		return "", 0, 0, err
 	}
 
-	page, err := positiveParam(q.Get("page"), 1, 0)
+	limit, err := intParam(q.Get("limit"), "limit")
 	if err != nil {
+		return "", 0, 0, err
+	}
+
+	return listParams(q.Get("status"), page, limit)
+}
+
+func intParam(v, name string) (*int, error) {
+	if v == "" {
+		return nil, nil
+	}
+
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be a number", name)
+	}
+	return &n, nil
+}
+
+func listParams(status string, page, limit *int) (db.EnvStatus, int, int, error) {
+	s, err := envStatus(status)
+	if err != nil {
+		return "", 0, 0, err
+	}
+
+	p, l := 1, defaultListLimit
+	if page != nil {
+		p = *page
+	}
+	if limit != nil {
+		l = *limit
+	}
+
+	if p < 1 {
 		return "", 0, 0, errors.New("page must be a positive number")
 	}
-
-	limit, err := positiveParam(q.Get("limit"), defaultListLimit, maxListLimit)
-	if err != nil {
+	if l < 1 || l > maxListLimit {
 		return "", 0, 0, fmt.Errorf("limit must be between 1 and %d", maxListLimit)
 	}
-
-	return status, page, limit, nil
+	return s, p, l, nil
 }
 
 func envStatus(v string) (db.EnvStatus, error) {
@@ -210,24 +228,11 @@ func envStatus(v string) (db.EnvStatus, error) {
 	}
 
 	status := db.EnvStatus(strings.ToUpper(v))
-	if !slices.Contains(envStatuses, status) {
-		return "", fmt.Errorf("status %q must be one of PROVISIONING, RUNNING, DELETING, DELETED, FAILED", v)
+	if !slices.Contains(db.EnvStatuses, status) {
+		return "", fmt.Errorf("status %q must be %s", v, oneOf(db.EnvStatuses))
 	}
 
 	return status, nil
-}
-
-func positiveParam(v string, def, max int) (int, error) {
-	if v == "" {
-		return def, nil
-	}
-
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 1 || (max > 0 && n > max) {
-		return 0, errors.New("out of range")
-	}
-
-	return n, nil
 }
 
 func (h *Handler) DeleteEnv(w http.ResponseWriter, r *http.Request) {
@@ -237,12 +242,7 @@ func (h *Handler) DeleteEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var e db.Environment
-	if _, admin := adminFrom(r.Context()); admin {
-		e, err = h.envs.DeleteAny(r.Context(), id)
-	} else {
-		e, err = h.envs.Delete(r.Context(), callerFrom(r.Context()), id)
-	}
+	e, err := h.envs.Delete(r.Context(), scope(r.Context()), id)
 	if err != nil {
 		writeServiceError(w, "delete environment", err)
 		return
@@ -260,9 +260,12 @@ type execRequest struct {
 }
 
 type execResponse struct {
-	Output   string `json:"output"`
-	ExitCode int    `json:"exit_code"`
+	Output    string `json:"output"`
+	ExitCode  int    `json:"exit_code"`
+	Truncated bool   `json:"truncated"`
 }
+
+var errCommandTimeout = errors.New("command timed out")
 
 func (h *Handler) ExecEnv(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
@@ -276,32 +279,27 @@ func (h *Handler) ExecEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Cmd) == 0 || req.Cmd[0] == "" {
-		writeError(w, http.StatusBadRequest, "cmd is required")
-		return
-	}
-
-	var out string
-	if _, admin := adminFrom(r.Context()); admin {
-		out, err = h.envs.ExecAny(r.Context(), id, req.Cmd)
-	} else {
-		out, err = h.envs.Exec(r.Context(), callerFrom(r.Context()), id, req.Cmd)
-	}
-
-	if exit, ok := errors.AsType[*provider.ExitError](err); ok {
-		writeJSON(w, http.StatusOK, execResponse{Output: out, ExitCode: exit.Code})
-		return
-	}
-
-	if errors.Is(err, context.DeadlineExceeded) {
-		writeError(w, http.StatusGatewayTimeout, "command timed out")
-		return
-	}
-
+	resp, err := h.execEnv(r.Context(), scope(r.Context()), id, req.Cmd)
 	if err != nil {
 		writeServiceError(w, "exec environment", err)
 		return
 	}
+	writeJSON(w, http.StatusOK, resp)
+}
 
-	writeJSON(w, http.StatusOK, execResponse{Output: out})
+func (h *Handler) execEnv(ctx context.Context, caller *db.AuthenticatedCaller, id uuid.UUID, cmd []string) (execResponse, error) {
+	res, err := h.envs.Exec(ctx, caller, id, cmd)
+	resp := execResponse{Output: res.Output, Truncated: res.Truncated}
+
+	if exit, ok := errors.AsType[*provider.ExitError](err); ok {
+		resp.ExitCode = exit.Code
+		return resp, nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return execResponse{}, errCommandTimeout
+	}
+	if err != nil {
+		return execResponse{}, err
+	}
+	return resp, nil
 }

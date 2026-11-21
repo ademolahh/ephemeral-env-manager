@@ -36,8 +36,7 @@ type Environment struct {
 	TemplateName    string             `json:"template_name"`
 	TemplateVersion string             `json:"template_version"`
 	InstanceStatus  provider.Status    `json:"instance_status,omitempty"`
-	// AccessURL and AccessToken open the endpoint through the proxy. They are
-	// derived per response for the environment's owner and never stored.
+	// Derived per response for the owner, never stored.
 	AccessURL   *string `json:"access_url,omitempty"`
 	AccessToken *string `json:"access_token,omitempty"`
 }
@@ -71,15 +70,9 @@ func scanEnvironment(row pgx.Row) (Environment, error) {
 	return e, err
 }
 
-func CreateEnvironment(ctx context.Context, q DBTX, e NewEnvironment) (uuid.UUID, error) {
+func CreateEnvironment(ctx context.Context, tx pgx.Tx, e NewEnvironment) (uuid.UUID, error) {
 	id := uuid.New()
-	tx, err := q.Begin(ctx)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("create environment: begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	_, err = tx.Exec(ctx, `
+	_, err := tx.Exec(ctx, `
 		INSERT INTO environments (
 			id, expires_at, type, provider,
 			cpu_millis, ram_mb, disk_gb, hourly_rate,
@@ -103,10 +96,6 @@ func CreateEnvironment(ctx context.Context, q DBTX, e NewEnvironment) (uuid.UUID
 
 	if _, err := tx.Exec(ctx, charge, e.CallerID, e.EstimatedCost); err != nil {
 		return uuid.Nil, fmt.Errorf("create environment: charge caller: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return uuid.Nil, fmt.Errorf("create environment: commit transaction: %w", err)
 	}
 
 	return id, nil
@@ -188,21 +177,29 @@ func MarkEnvironmentRunning(ctx context.Context, q DBTX, id uuid.UUID, backend s
 	return nil
 }
 
+type settlement uint8
+
+const (
+	releaseCapacity settlement = 1 << iota // return the resources to the pool
+	settleCost                             // charge the actual runtime and refund the rest
+)
+
 func MarkEnvironmentFailed(ctx context.Context, q DBTX, id uuid.UUID, reason string) error {
-	return setStatus(ctx, q, id, EnvFailed, &reason, true, true, EnvProvisioning, EnvRunning)
+	return setStatus(ctx, q, id, EnvFailed, &reason, releaseCapacity|settleCost, EnvProvisioning, EnvRunning)
 }
 
 func MarkEnvironmentDeleting(ctx context.Context, q DBTX, id uuid.UUID) error {
-	return setStatus(ctx, q, id, EnvDeleting, nil, true, false, EnvProvisioning, EnvRunning)
+	return setStatus(ctx, q, id, EnvDeleting, nil, releaseCapacity, EnvProvisioning, EnvRunning)
 }
 
 func MarkEnvironmentDeleted(ctx context.Context, q DBTX, id uuid.UUID) error {
-	return setStatus(ctx, q, id, EnvDeleted, nil, false, true, EnvDeleting)
+	return setStatus(ctx, q, id, EnvDeleted, nil, settleCost, EnvDeleting)
 }
 
-func setStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reason *string, release, refund bool, from ...EnvStatus) error {
+func setStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reason *string, s settlement, from ...EnvStatus) error {
+	release, refund := s&releaseCapacity != 0, s&settleCost != 0
 	if !release && !refund {
-		return updateStatus(ctx, q, id, to, reason, false, false, from)
+		return updateStatus(ctx, q, id, to, reason, s, from)
 	}
 
 	return pgx.BeginFunc(ctx, q, func(tx pgx.Tx) error {
@@ -224,14 +221,14 @@ func setStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reason *
 			}
 		}
 
-		return updateStatus(ctx, tx, id, to, reason, release, refund, from)
+		return updateStatus(ctx, tx, id, to, reason, s, from)
 	})
 }
 
-func updateStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reason *string, release, refund bool, from []EnvStatus) error {
+func updateStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reason *string, s settlement, from []EnvStatus) error {
 	allowed := make([]string, len(from))
-	for i, s := range from {
-		allowed[i] = string(s)
+	for i, st := range from {
+		allowed[i] = string(st)
 	}
 
 	var updated int
@@ -263,7 +260,7 @@ func updateStatus(ctx context.Context, q DBTX, id uuid.UUID, to EnvStatus, reaso
 			WHERE $5 AND p.provider = env.provider
 		)
 		SELECT count(*) FROM env`,
-		id, to, reason, allowed, release, refund,
+		id, to, reason, allowed, s&releaseCapacity != 0, s&settleCost != 0,
 	).Scan(&updated)
 
 	if err != nil {

@@ -55,6 +55,18 @@ func TestExecEnv(t *testing.T) {
 	}
 }
 
+func TestExecEnvReportsTruncatedOutput(t *testing.T) {
+	s := newServer(t)
+	key := s.keyWithRole(t, db.RoleUser)
+	created := s.createEnv(t, key)
+	s.fake.execOut, s.fake.execTruncated = "partial", true
+
+	rec := s.exec(t, key, created.ID.String(), `{"cmd": ["cat", "big.log"]}`)
+	if got := decodeExec(t, rec); got != (execResponse{Output: "partial", Truncated: true}) {
+		t.Errorf("response = %+v, want partial output marked truncated", got)
+	}
+}
+
 func TestExecEnvNonZeroExit(t *testing.T) {
 	s := newServer(t)
 	key := s.keyWithRole(t, db.RoleUser)

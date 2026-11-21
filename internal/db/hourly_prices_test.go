@@ -99,12 +99,12 @@ func TestSetHourlyPricesProvidersIndependent(t *testing.T) {
 	if err := SetHourlyPrices(ctx, tx, provider.Docker, dockerPrices); err != nil {
 		t.Fatalf("SetHourlyPrices(docker) error = %v", err)
 	}
-	if err := SetHourlyPrices(ctx, tx, provider.Cloud, cloudPrices); err != nil {
+	if err := SetHourlyPrices(ctx, tx, otherProvider, cloudPrices); err != nil {
 		t.Fatalf("SetHourlyPrices(cloud) error = %v", err)
 	}
 
 	checkPrices(t, getPrices(t, tx, provider.Docker), dockerPrices)
-	checkPrices(t, getPrices(t, tx, provider.Cloud), cloudPrices)
+	checkPrices(t, getPrices(t, tx, otherProvider), cloudPrices)
 }
 
 func TestSetHourlyPricesErrors(t *testing.T) {
@@ -133,10 +133,10 @@ func TestSetHourlyPricesErrors(t *testing.T) {
 			code:     "23514",
 		},
 		{
-			name:     "invalid provider",
-			provider: "aws",
+			name:     "empty provider",
+			provider: "",
 			prices:   dockerPrices,
-			code:     "22P02",
+			code:     "23514",
 		},
 	}
 
@@ -177,19 +177,8 @@ func TestGetHourlyPricesNotFound(t *testing.T) {
 		t.Fatalf("SetHourlyPrices() error = %v", err)
 	}
 
-	_, err := GetHourlyPrices(context.Background(), tx, provider.Cloud)
+	_, err := GetHourlyPrices(context.Background(), tx, otherProvider)
 	if !errors.Is(err, ErrPricesNotFound) {
 		t.Errorf("GetHourlyPrices() error = %v, want ErrPricesNotFound", err)
-	}
-}
-
-func TestGetHourlyPricesQueryError(t *testing.T) {
-	tx := testTx(t)
-	_, err := GetHourlyPrices(context.Background(), tx, "aws")
-	if errors.Is(err, ErrPricesNotFound) {
-		t.Fatalf("GetHourlyPrices() error = %v, want query error", err)
-	}
-	if got := pgCode(err); got != "22P02" {
-		t.Errorf("GetHourlyPrices() error = %v, want invalid enum value", err)
 	}
 }

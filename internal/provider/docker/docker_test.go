@@ -24,7 +24,7 @@ func testDocker(t *testing.T) *Docker {
 	dbtest.RequireDocker(t)
 	// A unique instance keeps tests from listing or removing containers that
 	// belong to other tests or to an EEM stack on the same host.
-	d, err := New(WithInstance("test-" + uuid.NewString()))
+	d, err := New(Config{Instance: "test-" + uuid.NewString()})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -375,7 +375,7 @@ func TestList(t *testing.T) {
 	if _, err := d.cli.NetworkCreate(ctx, networkName(networkOnly), client.NetworkCreateOptions{
 		Driver:   "bridge",
 		Internal: true,
-		Labels:   map[string]string{envLabel: networkOnly, instanceLabel: d.instance},
+		Labels:   map[string]string{envLabel: networkOnly, instanceLabel: d.cfg.Instance},
 	}); err != nil {
 		t.Fatalf("create network: %v", err)
 	}
@@ -513,34 +513,31 @@ func TestStatus(t *testing.T) {
 func TestHostConfigDiskQuota(t *testing.T) {
 	res := provider.Resources{CPUMillis: 500, RAMMB: 256, DiskGB: 5}
 
-	if hc := (&Docker{pidsLimit: DefaultPidsLimit}).hostConfig("net", res); hc.StorageOpt != nil {
+	if hc := (&Docker{cfg: Config{PidsLimit: DefaultPidsLimit}}).hostConfig("net", res); hc.StorageOpt != nil {
 		t.Errorf("StorageOpt = %v without disk quota, want none", hc.StorageOpt)
 	}
 
-	hc := (&Docker{pidsLimit: DefaultPidsLimit, diskQuota: true}).hostConfig("net", res)
+	hc := (&Docker{cfg: Config{PidsLimit: DefaultPidsLimit, DiskQuota: true}}).hostConfig("net", res)
 	if hc.StorageOpt["size"] != "5G" {
 		t.Errorf("StorageOpt = %v, want size 5G", hc.StorageOpt)
 	}
 }
 
-func TestOptionsFromEnv(t *testing.T) {
+func TestConfigFromEnv(t *testing.T) {
+	t.Setenv("EEM_INSTANCE", "stack-a")
 	t.Setenv("DOCKER_PIDS_LIMIT", "64")
 	t.Setenv("DOCKER_DISK_QUOTA", "true")
-	opts, err := OptionsFromEnv()
+	cfg, err := ConfigFromEnv()
 	if err != nil {
-		t.Fatalf("OptionsFromEnv() error = %v", err)
+		t.Fatalf("ConfigFromEnv() error = %v", err)
 	}
-	d := &Docker{}
-	for _, o := range opts {
-		o(d)
-	}
-	if d.pidsLimit != 64 || !d.diskQuota {
-		t.Errorf("options = pids %d, disk quota %v, want 64 and true", d.pidsLimit, d.diskQuota)
+	if want := (Config{Instance: "stack-a", PidsLimit: 64, DiskQuota: true}); cfg != want {
+		t.Errorf("ConfigFromEnv() = %+v, want %+v", cfg, want)
 	}
 
 	t.Setenv("DOCKER_PIDS_LIMIT", "0")
-	if _, err := OptionsFromEnv(); err == nil {
-		t.Error("OptionsFromEnv() with DOCKER_PIDS_LIMIT=0 error = nil, want error")
+	if _, err := ConfigFromEnv(); err == nil {
+		t.Error("ConfigFromEnv() with DOCKER_PIDS_LIMIT=0 error = nil, want error")
 	}
 }
 

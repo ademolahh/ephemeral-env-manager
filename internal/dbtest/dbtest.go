@@ -219,8 +219,7 @@ func Sessions(t *testing.T) *session.Store {
 	return session.New(rdb, prefix)
 }
 
-// skip skips a test whose dependency is not configured, or fails it when
-// TEST_REQUIRE_ALL is set so CI cannot silently skip integration tests.
+// TEST_REQUIRE_ALL turns skips into failures so CI cannot skip integration tests.
 func skip(t *testing.T, variable string) {
 	t.Helper()
 	if os.Getenv("TEST_REQUIRE_ALL") != "" {

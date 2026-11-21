@@ -134,6 +134,15 @@ func requireCallerSession(next http.Handler) http.Handler {
 	})
 }
 
+// scope is nil for admins, who see every environment.
+func scope(ctx context.Context) *db.AuthenticatedCaller {
+	if _, admin := adminFrom(ctx); admin {
+		return nil
+	}
+	c := callerFrom(ctx)
+	return &c
+}
+
 func callerFrom(ctx context.Context) db.AuthenticatedCaller {
 	c, _ := ctx.Value(callerKey{}).(db.AuthenticatedCaller)
 	return c

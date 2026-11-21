@@ -37,8 +37,8 @@ type createEnvInput struct {
 
 type listEnvsInput struct {
 	Status string `json:"status,omitempty" jsonschema:"PROVISIONING, RUNNING, DELETING, DELETED or FAILED"`
-	Page   int    `json:"page,omitempty" jsonschema:"page number, starting at 1"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"environments per page, up to 100"`
+	Page   *int   `json:"page,omitempty" jsonschema:"page number, starting at 1"`
+	Limit  *int   `json:"limit,omitempty" jsonschema:"environments per page, up to 100"`
 }
 
 type execInput struct {
@@ -185,7 +185,7 @@ func (h *Handler) mcpGetEnv(ctx context.Context, req *mcp.CallToolRequest, in en
 		return nil, nil, err
 	}
 
-	e, status, err := h.envs.Get(ctx, caller, id)
+	e, status, err := h.envs.Get(ctx, &caller, id)
 	if err != nil {
 		return nil, nil, toolError("get environment", err)
 	}
@@ -200,18 +200,9 @@ func (h *Handler) mcpListEnvs(ctx context.Context, req *mcp.CallToolRequest, in 
 		return nil, nil, err
 	}
 
-	status, err := envStatus(in.Status)
+	status, page, limit, err := listParams(in.Status, in.Page, in.Limit)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	page, limit := max(in.Page, 1), in.Limit
-	if limit == 0 {
-		limit = defaultListLimit
-	}
-
-	if limit < 1 || limit > maxListLimit {
-		return nil, nil, fmt.Errorf("limit must be between 1 and %d", maxListLimit)
 	}
 
 	resp, err := h.listEnvs(ctx, caller, status, page, limit)
@@ -233,7 +224,7 @@ func (h *Handler) mcpDeleteEnv(ctx context.Context, req *mcp.CallToolRequest, in
 		return nil, nil, err
 	}
 
-	e, err := h.envs.Delete(ctx, caller, id)
+	e, err := h.envs.Delete(ctx, &caller, id)
 	if err != nil {
 		return nil, nil, toolError("delete environment", err)
 	}
@@ -252,24 +243,11 @@ func (h *Handler) mcpExec(ctx context.Context, req *mcp.CallToolRequest, in exec
 		return nil, nil, err
 	}
 
-	if len(in.Cmd) == 0 || in.Cmd[0] == "" {
-		return nil, nil, errors.New("cmd is required")
-	}
-
-	out, err := h.envs.Exec(ctx, caller, id, in.Cmd)
-	if exit, ok := errors.AsType[*provider.ExitError](err); ok {
-		return nil, execResponse{Output: out, ExitCode: exit.Code}, nil
-	}
-
-	if errors.Is(err, context.DeadlineExceeded) {
-		return nil, nil, errors.New("command timed out")
-	}
-
+	resp, err := h.execEnv(ctx, &caller, id, in.Cmd)
 	if err != nil {
 		return nil, nil, toolError("exec environment", err)
 	}
-
-	return nil, execResponse{Output: out}, nil
+	return nil, resp, nil
 }
 
 func (h *Handler) mcpListTemplates(ctx context.Context, _ *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, any, error) {
@@ -278,9 +256,6 @@ func (h *Handler) mcpListTemplates(ctx context.Context, _ *mcp.CallToolRequest, 
 		return nil, nil, toolError("list templates", err)
 	}
 
-	if specs == nil {
-		specs = []json.RawMessage{}
-	}
 	return nil, map[string][]json.RawMessage{"templates": specs}, nil
 }
 

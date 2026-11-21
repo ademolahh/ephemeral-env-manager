@@ -114,7 +114,6 @@ func TestSetCapacityRejected(t *testing.T) {
 		want string
 	}{
 		{name: "unknown provider", path: "/capacity/aws", body: `{"total": {"cpu_millis": 1000, "ram_mb": 1024, "disk_gb": 1}}`, code: http.StatusBadRequest, want: "provider not configured"},
-		{name: "unconfigured provider", path: "/capacity/cloud", body: `{"total": {"cpu_millis": 1000, "ram_mb": 1024, "disk_gb": 1}}`, code: http.StatusBadRequest, want: "provider not configured"},
 		{name: "malformed json", path: "/capacity/docker", body: `{`, code: http.StatusBadRequest, want: "invalid request body"},
 		{name: "unknown field", path: "/capacity/docker", body: `{"cpu_millis": 1000}`, code: http.StatusBadRequest, want: "unknown field"},
 		{name: "missing total", path: "/capacity/docker", body: `{}`, code: http.StatusBadRequest, want: "total is required"},

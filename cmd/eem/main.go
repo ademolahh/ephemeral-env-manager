@@ -18,13 +18,10 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/api"
 	"github.com/ademolahh/ephemeral-env-manager/internal/auth"
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
-	"github.com/ademolahh/ephemeral-env-manager/internal/env"
 	"github.com/ademolahh/ephemeral-env-manager/internal/logging"
 	"github.com/ademolahh/ephemeral-env-manager/internal/metrics"
-	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
-	"github.com/ademolahh/ephemeral-env-manager/internal/provider/docker"
-	"github.com/ademolahh/ephemeral-env-manager/internal/proxy"
 	"github.com/ademolahh/ephemeral-env-manager/internal/session"
+	"github.com/ademolahh/ephemeral-env-manager/internal/setup"
 )
 
 func main() {
@@ -63,32 +60,10 @@ func main() {
 	}
 	defer rdb.Close()
 
-	px, err := proxy.FromEnv()
+	envs, d, err := setup.Manager(ctx, pool)
 	if err != nil {
-		logging.Fatal("proxy", err)
+		logging.Fatal("environments", err)
 	}
-
-	dockerOpts, err := docker.OptionsFromEnv()
-	if err != nil {
-		logging.Fatal("docker", err)
-	}
-
-	var envOpts []env.Option
-	if px != nil {
-		dockerOpts = append(dockerOpts, docker.WithProxy(px.Container))
-		envOpts = append(envOpts, env.WithProxy(px))
-	}
-
-	d, err := docker.New(dockerOpts...)
-	if err != nil {
-		logging.Fatal("docker", err)
-	}
-
-	if err := d.Ping(ctx); err != nil {
-		logging.Fatal("docker", err)
-	}
-
-	envs := env.NewManager(pool, map[provider.Type]provider.Provider{provider.Docker: d}, envOpts...)
 
 	if n, err := envs.Resume(ctx); err != nil {
 		logging.Fatal("resume", err)
@@ -103,20 +78,18 @@ func main() {
 		"docker":   d.Ping,
 	})
 
-	var handlerOpts []api.Option
+	h := api.NewHandler(pool, envs, session.New(rdb, "eem:"), github)
 	if v := os.Getenv("INLINE_TEMPLATES"); v != "" {
 		allow, err := strconv.ParseBool(v)
 		if err != nil {
 			logging.Fatal("INLINE_TEMPLATES must be true or false", err)
 		}
-		if !allow {
-			handlerOpts = append(handlerOpts, api.WithoutInlineTemplates())
-		}
+		h.DisableInlineTemplates = !allow
 	}
 
 	srv := &http.Server{
 		Addr:              ":8080",
-		Handler:           api.Routes(api.NewHandler(pool, envs, session.New(rdb, "eem:"), github, handlerOpts...)),
+		Handler:           api.Routes(h),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -136,7 +109,7 @@ func main() {
 	}
 
 	slog.Info("waiting for in-flight provisioning")
-	envs.Wait()
+	envs.Stop()
 }
 
 func githubFromEnv() (*auth.GitHub, error) {

@@ -1,4 +1,3 @@
-// Package metrics holds the Prometheus metrics the services export.
 package metrics
 
 import (
@@ -63,8 +62,6 @@ var (
 	}, []string{"route"})
 )
 
-// InstrumentHTTP counts and times requests to the handler registered for
-// route, and logs each one at debug level.
 func InstrumentHTTP(route string, next http.Handler) http.Handler {
 	counter := httpRequests.MustCurryWith(prometheus.Labels{"route": route})
 	duration := httpDuration.MustCurryWith(prometheus.Labels{"route": route})
@@ -77,8 +74,7 @@ func InstrumentHTTP(route string, next http.Handler) http.Handler {
 	})
 }
 
-// StateCollector reports environment counts and capacity pool usage read
-// from Postgres at scrape time, so every replica reports the same numbers.
+// StateCollector reads from Postgres at scrape time, so every replica reports the same numbers.
 type StateCollector struct {
 	db           db.DBTX
 	environments *prometheus.Desc

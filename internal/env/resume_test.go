@@ -59,7 +59,7 @@ func TestResumeWatchesProvisioningAfterRestart(t *testing.T) {
 			if err != nil || n != 1 {
 				t.Fatalf("Resume() = %d, %v, want 1 environment", n, err)
 			}
-			m.WaitReady()
+			m.Wait()
 
 			e, err := db.GetEnvironment(context.Background(), tx, id)
 			if err != nil {

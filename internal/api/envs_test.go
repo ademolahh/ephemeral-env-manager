@@ -20,10 +20,12 @@ import (
 )
 
 type fakeProvider struct {
-	calls    []provider.Template
-	execOut  string
-	execErr  error
-	execCmds [][]string
+	calls   []provider.Template
+	execOut string
+	execErr error
+
+	execTruncated bool
+	execCmds      [][]string
 }
 
 func (f *fakeProvider) Create(ctx context.Context, id, workload string, temp provider.Template) (string, error) {
@@ -39,9 +41,9 @@ func (f *fakeProvider) Status(ctx context.Context, id string) (provider.Status, 
 
 func (f *fakeProvider) Address(ctx context.Context, id string) (string, error) { return "", nil }
 
-func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (string, error) {
+func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (provider.ExecResult, error) {
 	f.execCmds = append(f.execCmds, cmd)
-	return f.execOut, f.execErr
+	return provider.ExecResult{Output: f.execOut, Truncated: f.execTruncated}, f.execErr
 }
 
 func (f *fakeProvider) List(ctx context.Context) ([]string, error) { return nil, nil }
@@ -397,7 +399,7 @@ func TestCreateEnvBadRequest(t *testing.T) {
 			return withBody(t, func(m map[string]any) { m["type"] = "STAGING" })
 		}, want: "invalid environment type"},
 		{name: "provider not allowed", body: func(t *testing.T) string {
-			return withBody(t, func(m map[string]any) { m["provider"] = "cloud" })
+			return withBody(t, func(m map[string]any) { m["provider"] = "other" })
 		}, want: "not allowed"},
 		{name: "idempotency key too long", body: func(*testing.T) string { return validBody },
 			headers: map[string]string{"Idempotency-Key": strings.Repeat("k", 256)}, want: "Idempotency-Key"},
@@ -515,5 +517,5 @@ func TestCreateEnvInternalErrorHidesDetails(t *testing.T) {
 
 func (s server) settle(t *testing.T) {
 	t.Helper()
-	s.m.WaitReady()
+	s.m.Wait()
 }

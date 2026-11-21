@@ -57,7 +57,7 @@ func (f fixture) create(callerID uuid.UUID, typ db.EnvType, r provider.Resources
 }
 
 func (f fixture) createWith(callerID, keyID uuid.UUID, typ db.EnvType, r provider.Resources, idempotencyKey string) (uuid.UUID, error) {
-	defer f.m.WaitReady()
+	defer f.m.Wait()
 	e, err := f.m.Create(context.Background(), CreateRequest{
 		CallerID:       callerID,
 		APIKeyID:       keyID,

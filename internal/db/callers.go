@@ -26,6 +26,23 @@ type NewCaller struct {
 	BudgetExpiresAt time.Time
 }
 
+var DefaultQuota = provider.Resources{CPUMillis: 4000, RAMMB: 16384, DiskGB: 50}
+
+const (
+	DefaultCostBudget   = int64(10000) // US cents
+	DefaultBudgetPeriod = 30 * 24 * time.Hour
+	DefaultKeyTTL       = DefaultBudgetPeriod
+)
+
+func DefaultCaller(permitted EnvType) NewCaller {
+	return NewCaller{
+		PermittedEnv:    permitted,
+		Quota:           DefaultQuota,
+		CostBudgetTotal: DefaultCostBudget,
+		BudgetExpiresAt: time.Now().Add(DefaultBudgetPeriod).UTC().Truncate(time.Second),
+	}
+}
+
 type CallerLimits struct {
 	PermittedEnv    EnvType
 	Quota           provider.Resources

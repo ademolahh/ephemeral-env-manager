@@ -8,6 +8,7 @@ import (
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
 	"github.com/ademolahh/ephemeral-env-manager/internal/env"
+	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
 func writeServiceError(w http.ResponseWriter, op string, err error) {
@@ -33,8 +34,6 @@ func badRequest(format string, args ...any) error {
 	return &badRequestError{msg: fmt.Sprintf(format, args...)}
 }
 
-// apiErrors maps service errors to an HTTP status and a stable code that
-// clients can branch on instead of parsing the message.
 var apiErrors = []struct {
 	err    error
 	status int
@@ -44,6 +43,7 @@ var apiErrors = []struct {
 	{env.ErrNoProvider, http.StatusBadRequest, "no_provider"},
 	{env.ErrProviderNotAllowed, http.StatusBadRequest, "provider_not_allowed"},
 	{env.ErrProviderUnavailable, http.StatusBadRequest, "provider_unavailable"},
+	{provider.ErrEmptyCommand, http.StatusBadRequest, "empty_command"},
 
 	{env.ErrNotPermitted, http.StatusForbidden, "not_permitted"},
 	{env.ErrQuotaExceeded, http.StatusForbidden, "quota_exceeded"},
@@ -68,6 +68,8 @@ var apiErrors = []struct {
 	{env.ErrCapacityExceeded, http.StatusServiceUnavailable, "capacity_exceeded"},
 	{db.ErrPoolNotFound, http.StatusServiceUnavailable, "capacity_pool_not_found"},
 	{db.ErrPricesNotFound, http.StatusServiceUnavailable, "prices_not_found"},
+
+	{errCommandTimeout, http.StatusGatewayTimeout, "timeout"},
 }
 
 func classify(err error) (int, string) {
@@ -89,7 +91,6 @@ func errorStatus(err error) int {
 	return status
 }
 
-// statusCode is the code for errors that have no more specific one.
 func statusCode(status int) string {
 	switch status {
 	case http.StatusBadRequest:

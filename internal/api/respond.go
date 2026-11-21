@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 )
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -43,4 +44,15 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 
 func writeErrorCode(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, errorResponse{Error: msg, Code: code})
+}
+
+func oneOf[T ~string](values []T) string {
+	names := make([]string, len(values))
+	for i, v := range values {
+		names[i] = string(v)
+	}
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
 }

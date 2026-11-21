@@ -12,6 +12,9 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
+// otherProvider stands in for a second provider in multi-provider tests.
+const otherProvider provider.Type = "other"
+
 func TestLockCaller(t *testing.T) {
 	tx := testTx(t)
 	c := newCaller()
@@ -115,7 +118,7 @@ func TestListPreemptible(t *testing.T) {
 	oldRegular := seed(EnvRegularTesting, provider.Docker, EnvRunning, 2*time.Hour)
 	newReview := seed(EnvPRReview, provider.Docker, EnvProvisioning, time.Hour)
 	seed(EnvProdBug, provider.Docker, EnvRunning, 0)
-	seed(EnvRegularTesting, provider.Cloud, EnvRunning, 0)
+	seed(EnvRegularTesting, otherProvider, EnvRunning, 0)
 	seed(EnvRegularTesting, provider.Docker, EnvDeleting, 0)
 	seed(EnvRegularTesting, provider.Docker, EnvFailed, 0)
 
@@ -152,7 +155,7 @@ func TestLockCapacityPool(t *testing.T) {
 		t.Errorf("LockCapacityPool() = %+v, want default and available %+v", got, total)
 	}
 
-	if _, err := LockCapacityPool(ctx, tx, provider.Cloud); !errors.Is(err, ErrPoolNotFound) {
+	if _, err := LockCapacityPool(ctx, tx, otherProvider); !errors.Is(err, ErrPoolNotFound) {
 		t.Errorf("LockCapacityPool(cloud) error = %v, want ErrPoolNotFound", err)
 	}
 }

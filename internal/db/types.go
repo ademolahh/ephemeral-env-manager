@@ -27,8 +27,15 @@ const (
 	EnvFailed       EnvStatus = "FAILED"
 )
 
+// Lowest to highest priority.
 var EnvTypes = []EnvType{EnvRegularTesting, EnvPRReview, EnvProdBug}
+
+var EnvStatuses = []EnvStatus{EnvProvisioning, EnvRunning, EnvDeleting, EnvDeleted, EnvFailed}
 
 func (t EnvType) Rank() int {
 	return slices.Index(EnvTypes, t) + 1
+}
+
+func (t EnvType) Valid() bool {
+	return t.Rank() > 0
 }

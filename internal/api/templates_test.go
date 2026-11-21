@@ -237,7 +237,9 @@ func TestCreateEnvTemplateErrors(t *testing.T) {
 
 func TestInlineTemplatesCanBeDisabled(t *testing.T) {
 	s := newServer(t)
-	s.handler = Routes(NewHandler(s.tx, s.m, s.sessions, nil, WithoutInlineTemplates()))
+	h := NewHandler(s.tx, s.m, s.sessions, nil)
+	h.DisableInlineTemplates = true
+	s.handler = Routes(h)
 	key := s.apiKey(t, db.EnvRegularTesting, provider.Resources{CPUMillis: 10000, RAMMB: 20480, DiskGB: 50})
 
 	rec := s.post(t, key, withBody(t, func(map[string]any) {}), nil)

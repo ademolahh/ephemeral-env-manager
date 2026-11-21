@@ -26,7 +26,7 @@ func createRouted(t *testing.T, tx pgx.Tx, callerID uuid.UUID, m *Manager) db.En
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 
 	e, err := db.GetEnvironment(context.Background(), tx, created.ID)
 	if err != nil {
@@ -44,7 +44,8 @@ func withPorts() provider.Template {
 func TestCreateReturnsEndpoint(t *testing.T) {
 	tx, callerID := setup(t)
 	fake := &fakeProvider{address: "eem-x-workload:8080"}
-	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake}, WithProxy(testProxy))
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake})
+	m.Proxy = testProxy
 
 	created, err := m.Create(context.Background(), CreateRequest{
 		CallerID: callerID,
@@ -55,7 +56,7 @@ func TestCreateReturnsEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 
 	want := testProxy.URL(created.ID)
 	if created.Status != db.EnvProvisioning {
@@ -88,7 +89,8 @@ func TestCreateReturnsEndpoint(t *testing.T) {
 func TestCreateFailedKeepsEndpointWithoutRoute(t *testing.T) {
 	tx, callerID := setup(t)
 	fake := &fakeProvider{address: "eem-x-workload:8080", err: errors.New("pull failed")}
-	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake}, WithProxy(testProxy))
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake})
+	m.Proxy = testProxy
 
 	created, err := m.Create(context.Background(), CreateRequest{
 		CallerID: callerID,
@@ -99,7 +101,7 @@ func TestCreateFailedKeepsEndpointWithoutRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 
 	if _, err := db.RouteBackend(context.Background(), tx, created.ID); !errors.Is(err, db.ErrRouteNotFound) {
 		t.Errorf("RouteBackend() error = %v, want ErrRouteNotFound", err)
@@ -131,7 +133,8 @@ func TestCreateWithoutProxySetsNoRoute(t *testing.T) {
 
 func TestCreateWorkloadWithoutPortsSetsNoRoute(t *testing.T) {
 	tx, callerID := setup(t)
-	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: &fakeProvider{}}, WithProxy(testProxy))
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: &fakeProvider{}})
+	m.Proxy = testProxy
 
 	e := createRouted(t, tx, callerID, m)
 
@@ -146,7 +149,8 @@ func TestCreateWorkloadWithoutPortsSetsNoRoute(t *testing.T) {
 func TestCreateAddressErrorStillRuns(t *testing.T) {
 	tx, callerID := setup(t)
 	fake := &fakeProvider{addressErr: errors.New("inspect failed")}
-	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake}, WithProxy(testProxy))
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake})
+	m.Proxy = testProxy
 
 	e := createRouted(t, tx, callerID, m)
 
@@ -161,7 +165,8 @@ func TestCreateAddressErrorStillRuns(t *testing.T) {
 func TestCreateFailedSetsNoRoute(t *testing.T) {
 	tx, callerID := setup(t)
 	fake := &fakeProvider{address: "eem-x-workload:8080", err: errors.New("pull failed")}
-	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake}, WithProxy(testProxy))
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake})
+	m.Proxy = testProxy
 
 	e := createRouted(t, tx, callerID, m)
 
@@ -177,7 +182,8 @@ func TestResolveStuckSetsRoute(t *testing.T) {
 	tx, callerID := setup(t)
 	ctx := context.Background()
 	fake := &fakeProvider{address: "eem-x-workload:8080", status: provider.StatusRunning}
-	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake}, WithProxy(testProxy))
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake})
+	m.Proxy = testProxy
 
 	id, err := db.CreateEnvironment(ctx, tx, db.NewEnvironment{
 		CallerID:        callerID,
@@ -217,7 +223,8 @@ func TestResolveStuckSetsRoute(t *testing.T) {
 func TestExposeAddsAccessOnlyWhileActive(t *testing.T) {
 	tx, callerID := setup(t)
 	fake := &fakeProvider{address: "eem-x-workload:8080"}
-	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake}, WithProxy(testProxy))
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: fake})
+	m.Proxy = testProxy
 
 	created, err := m.Create(context.Background(), CreateRequest{
 		CallerID: callerID,
@@ -228,7 +235,7 @@ func TestExposeAddsAccessOnlyWhileActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 
 	e := m.Expose(created)
 	if e.AccessToken == nil || *e.AccessToken != testProxy.AccessToken(created.ID) {

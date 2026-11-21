@@ -31,9 +31,6 @@ var (
 const (
 	minSecretLen = 32
 
-	// An environment's access token can arrive as this header (for scripts
-	// and agents), as this query parameter (in the access URL) or as this
-	// cookie (which the proxy sets after the first visit with the parameter).
 	TokenHeader = "X-EEM-Access-Token"
 	TokenParam  = "eem_token"
 	TokenCookie = "eem_access"
@@ -43,11 +40,10 @@ type Proxy struct {
 	Domain     string
 	PublicPort int
 	Container  string
-	// Secret signs environment access tokens. eem and the proxy must share it.
+	// Secret signs access tokens; eem and the proxy must share it.
 	Secret []byte
 }
 
-// SecretFromEnv reads PROXY_SECRET and checks its length.
 func SecretFromEnv() ([]byte, error) {
 	secret := []byte(os.Getenv("PROXY_SECRET"))
 	if len(secret) < minSecretLen {
@@ -95,17 +91,13 @@ func (p *Proxy) URL(id uuid.UUID) string {
 	return "http://" + p.Host(id) + ":" + strconv.Itoa(p.PublicPort)
 }
 
-// AccessToken is the token that opens environment id through the proxy. It
-// is derived from the secret, so it needs no storage and stops working when
-// the secret rotates.
+// AccessToken is derived from the secret, so nothing is stored.
 func (p *Proxy) AccessToken(id uuid.UUID) string {
 	mac := hmac.New(sha256.New, p.Secret)
 	mac.Write([]byte("eem-env-access:" + id.String()))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-// AccessURL opens environment id in a browser: the proxy swaps the token in
-// the query for a cookie and redirects to the bare URL.
 func (p *Proxy) AccessURL(id uuid.UUID) string {
 	return p.URL(id) + "/?" + url.Values{TokenParam: {p.AccessToken(id)}}.Encode()
 }
@@ -176,9 +168,7 @@ func (p *Proxy) Handler(q db.DBTX) http.Handler {
 	}))
 }
 
-// authenticate checks the request's access token for environment id. A valid
-// token in the query of a GET sets the cookie and redirects to the same URL
-// without it, so the token leaves the address bar and browser history.
+// A token in a GET query is swapped for a cookie and redirected away, so it leaves browser history.
 func (p *Proxy) authenticate(w http.ResponseWriter, r *http.Request, id uuid.UUID) bool {
 	if p.authorized(id, r.Header.Get(TokenHeader)) {
 		return true
@@ -214,8 +204,6 @@ func (p *Proxy) authenticate(w http.ResponseWriter, r *http.Request, id uuid.UUI
 	return false
 }
 
-// stripToken removes the access token from a request before it reaches the
-// workload, which must never see it.
 func stripToken(out *http.Request) {
 	out.Header.Del(TokenHeader)
 
@@ -224,8 +212,7 @@ func stripToken(out *http.Request) {
 		out.URL.RawQuery = q.Encode()
 	}
 
-	// Filter the raw header so the workload's own cookies pass through
-	// byte for byte.
+	// Filter the raw header so the workload's cookies pass through byte for byte.
 	var kept []string
 	for _, line := range out.Header.Values("Cookie") {
 		for part := range strings.SplitSeq(line, ";") {

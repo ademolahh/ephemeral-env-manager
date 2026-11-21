@@ -19,7 +19,7 @@ func TestWatchWaitsForRunning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 
 	if got := status(t, tx, e.ID).Status; got != db.EnvRunning {
 		t.Errorf("status = %s, want RUNNING", got)
@@ -65,7 +65,7 @@ func TestWatchSkipsDeleted(t *testing.T) {
 		t.Fatalf("MarkEnvironmentDeleting() error = %v", err)
 	}
 	close(release)
-	m.WaitReady()
+	m.Wait()
 
 	if got := status(t, tx, e.ID).Status; got != db.EnvDeleting {
 		t.Errorf("status = %s, want DELETING", got)

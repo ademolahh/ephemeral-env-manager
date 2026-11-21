@@ -12,12 +12,6 @@ import (
 	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
 )
 
-var (
-	defaultQuota        = provider.Resources{CPUMillis: 4000, RAMMB: 16384, DiskGB: 50}
-	defaultCostBudget   = int64(10000)
-	defaultBudgetPeriod = 30 * 24 * time.Hour
-)
-
 type createCallerRequest struct {
 	GithubLogin string `json:"github_login"`
 	GithubID    string `json:"github_id"`
@@ -39,14 +33,8 @@ func (h *Handler) CreateCaller(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c := db.NewCaller{
-		GithubLogin:     optional(req.GithubLogin),
-		GithubID:        optional(req.GithubID),
-		PermittedEnv:    db.EnvRegularTesting,
-		Quota:           defaultQuota,
-		CostBudgetTotal: defaultCostBudget,
-		BudgetExpiresAt: time.Now().Add(defaultBudgetPeriod).UTC().Truncate(time.Second),
-	}
+	c := db.DefaultCaller(db.EnvRegularTesting)
+	c.GithubLogin, c.GithubID = optional(req.GithubLogin), optional(req.GithubID)
 
 	id, err := db.CreateCaller(r.Context(), h.db, c)
 	if err != nil {
@@ -81,7 +69,6 @@ type setBudgetRequest struct {
 
 type budgetResponse struct {
 	CallerID        uuid.UUID          `json:"caller_id"`
-	Currency        string             `json:"currency"`
 	CostBudget      int64              `json:"cost_budget"`
 	CostUsed        int64              `json:"cost_used"`
 	CostRemaining   int64              `json:"cost_remaining"`
@@ -137,7 +124,6 @@ func (h *Handler) callerBudget(ctx context.Context, id uuid.UUID) (budgetRespons
 
 	return budgetResponse{
 		CallerID:        id,
-		Currency:        "USD cents",
 		CostBudget:      budget.CostBudgetTotal,
 		CostUsed:        budget.CostUsed,
 		CostRemaining:   max(0, budget.CostBudgetTotal-budget.CostUsed),
@@ -211,8 +197,8 @@ func (h *Handler) SetPermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.PermittedEnv != db.EnvRegularTesting && req.PermittedEnv != db.EnvPRReview && req.PermittedEnv != db.EnvProdBug {
-		writeError(w, http.StatusBadRequest, "permitted_env must be REGULAR_TESTING, PR_REVIEW or PROD_BUG")
+	if !req.PermittedEnv.Valid() {
+		writeError(w, http.StatusBadRequest, "permitted_env must be "+oneOf(db.EnvTypes))
 		return
 	}
 

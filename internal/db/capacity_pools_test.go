@@ -190,11 +190,11 @@ func TestSetCapacityPoolNegative(t *testing.T) {
 	}
 }
 
-func TestSetCapacityPoolInvalidProvider(t *testing.T) {
+func TestSetCapacityPoolEmptyProvider(t *testing.T) {
 	tx := testTx(t)
-	err := SetCapacityPool(context.Background(), tx, "aws", provider.Resources{CPUMillis: 1000})
-	if got := pgCode(err); got != "22P02" {
-		t.Errorf("SetCapacityPool() error = %v, want invalid enum value", err)
+	err := SetCapacityPool(context.Background(), tx, "", provider.Resources{CPUMillis: 1000})
+	if got := pgCode(err); got != "23514" {
+		t.Errorf("SetCapacityPool() error = %v, want check violation", err)
 	}
 }
 
@@ -207,14 +207,14 @@ func TestSetCapacityPoolProvidersIndependent(t *testing.T) {
 	if err := SetCapacityPool(ctx, tx, provider.Docker, docker); err != nil {
 		t.Fatalf("SetCapacityPool(docker) error = %v", err)
 	}
-	if err := SetCapacityPool(ctx, tx, provider.Cloud, cloud); err != nil {
+	if err := SetCapacityPool(ctx, tx, otherProvider, cloud); err != nil {
 		t.Fatalf("SetCapacityPool(cloud) error = %v", err)
 	}
 
 	if got := getPool(t, tx, provider.Docker); got.Default != docker || got.Available != docker {
 		t.Errorf("docker pool = %+v, want default and available %+v", got, docker)
 	}
-	if got := getPool(t, tx, provider.Cloud); got.Default != cloud || got.Available != cloud {
+	if got := getPool(t, tx, otherProvider); got.Default != cloud || got.Available != cloud {
 		t.Errorf("cloud pool = %+v, want default and available %+v", got, cloud)
 	}
 }

@@ -91,9 +91,7 @@ func (req createEnvRequest) override(tr *templateRequest) error {
 	return nil
 }
 
-// inlineIdentity names an environment's inline template so its record can't
-// pass for a stored one: "inline:" plus the given name, and a hash of the
-// spec that ran as the version.
+// inlineIdentity keeps an inline template's record from passing for a stored one.
 func inlineIdentity(tr templateRequest) (name, version string) {
 	spec, _ := json.Marshal(tr)
 	sum := sha256.Sum256(spec)
@@ -160,9 +158,6 @@ func (h *Handler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if specs == nil {
-		specs = []json.RawMessage{}
-	}
 	writeJSON(w, http.StatusOK, map[string][]json.RawMessage{"templates": specs})
 }
 

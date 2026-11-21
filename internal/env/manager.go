@@ -41,28 +41,18 @@ const (
 )
 
 type Manager struct {
-	db          db.DBTX
-	providers   map[provider.Type]provider.Provider
-	proxy       *proxy.Proxy
-	wg          sync.WaitGroup
-	provisioned chan uuid.UUID
-	watching    sync.WaitGroup
+	// Proxy must be set before the first Create.
+	Proxy *proxy.Proxy
+
+	db        db.DBTX
+	providers map[provider.Type]provider.Provider
+	wg        sync.WaitGroup
+	stop      chan struct{}
+	stopOnce  sync.Once
 }
 
-type Option func(*Manager)
-
-func WithProxy(p *proxy.Proxy) Option {
-	return func(m *Manager) { m.proxy = p }
-}
-
-func NewManager(q db.DBTX, providers map[provider.Type]provider.Provider, opts ...Option) *Manager {
-	m := &Manager{db: q, providers: providers, provisioned: make(chan uuid.UUID, 100)}
-	for _, opt := range opts {
-		opt(m)
-	}
-
-	go m.watch()
-	return m
+func NewManager(q db.DBTX, providers map[provider.Type]provider.Provider) *Manager {
+	return &Manager{db: q, providers: providers, stop: make(chan struct{})}
 }
 
 type CreateRequest struct {
@@ -97,7 +87,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (db.Environment
 	var r reservation
 	err := pgx.BeginFunc(ctx, m.db, func(tx pgx.Tx) error {
 		var err error
-		r, err = reserve(ctx, tx, pt, m.proxy, req)
+		r, err = reserve(ctx, tx, pt, m.Proxy, req)
 		return err
 	})
 
@@ -124,17 +114,9 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (db.Environment
 	return r.env, nil
 }
 
-func (m *Manager) Get(ctx context.Context, caller db.AuthenticatedCaller, id uuid.UUID) (db.Environment, provider.Status, error) {
-	e, err := m.owned(ctx, caller, id)
-	if err != nil {
-		return db.Environment{}, "", fmt.Errorf("get environment: %w", err)
-	}
-
-	return m.withStatus(ctx, e)
-}
-
-func (m *Manager) GetAny(ctx context.Context, id uuid.UUID) (db.Environment, provider.Status, error) {
-	e, err := db.GetEnvironment(ctx, m.db, id)
+// A nil caller is an admin and sees every environment.
+func (m *Manager) Get(ctx context.Context, caller *db.AuthenticatedCaller, id uuid.UUID) (db.Environment, provider.Status, error) {
+	e, err := m.visible(ctx, caller, id)
 	if err != nil {
 		return db.Environment{}, "", fmt.Errorf("get environment: %w", err)
 	}
@@ -164,8 +146,8 @@ func (m *Manager) withStatus(ctx context.Context, e db.Environment) (db.Environm
 	return e, status, nil
 }
 
-func (m *Manager) Delete(ctx context.Context, caller db.AuthenticatedCaller, id uuid.UUID) (db.Environment, error) {
-	e, err := m.owned(ctx, caller, id)
+func (m *Manager) Delete(ctx context.Context, caller *db.AuthenticatedCaller, id uuid.UUID) (db.Environment, error) {
+	e, err := m.visible(ctx, caller, id)
 	if err != nil {
 		return db.Environment{}, fmt.Errorf("delete environment: %w", err)
 	}
@@ -173,41 +155,23 @@ func (m *Manager) Delete(ctx context.Context, caller db.AuthenticatedCaller, id 
 	return m.Remove(ctx, e)
 }
 
-func (m *Manager) DeleteAny(ctx context.Context, id uuid.UUID) (db.Environment, error) {
-	e, err := db.GetEnvironment(ctx, m.db, id)
-	if err != nil {
-		return db.Environment{}, fmt.Errorf("delete environment: %w", err)
+func (m *Manager) Exec(ctx context.Context, caller *db.AuthenticatedCaller, id uuid.UUID, cmd []string) (provider.ExecResult, error) {
+	if len(cmd) == 0 || cmd[0] == "" {
+		return provider.ExecResult{}, fmt.Errorf("exec environment %s: %w", id, provider.ErrEmptyCommand)
 	}
 
-	return m.Remove(ctx, e)
-}
-
-func (m *Manager) Exec(ctx context.Context, caller db.AuthenticatedCaller, id uuid.UUID, cmd []string) (string, error) {
-	e, err := m.owned(ctx, caller, id)
+	e, err := m.visible(ctx, caller, id)
 	if err != nil {
-		return "", fmt.Errorf("exec environment: %w", err)
+		return provider.ExecResult{}, fmt.Errorf("exec environment: %w", err)
 	}
 
-	return m.exec(ctx, e, cmd)
-}
-
-func (m *Manager) ExecAny(ctx context.Context, id uuid.UUID, cmd []string) (string, error) {
-	e, err := db.GetEnvironment(ctx, m.db, id)
-	if err != nil {
-		return "", fmt.Errorf("exec environment: %w", err)
-	}
-
-	return m.exec(ctx, e, cmd)
-}
-
-func (m *Manager) exec(ctx context.Context, e db.Environment, cmd []string) (string, error) {
 	if e.Status != db.EnvRunning {
-		return "", fmt.Errorf("exec environment %s: %w", e.ID, ErrNotRunning)
+		return provider.ExecResult{}, fmt.Errorf("exec environment %s: %w", e.ID, ErrNotRunning)
 	}
 
 	p, ok := m.providers[e.Provider]
 	if !ok {
-		return "", fmt.Errorf("exec environment %s on %s: %w", e.ID, e.Provider, ErrProviderUnavailable)
+		return provider.ExecResult{}, fmt.Errorf("exec environment %s on %s: %w", e.ID, e.Provider, ErrProviderUnavailable)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, execTimeout)
@@ -216,10 +180,10 @@ func (m *Manager) exec(ctx context.Context, e db.Environment, cmd []string) (str
 	return p.Exec(ctx, e.ID.String(), cmd)
 }
 
-func (m *Manager) owned(ctx context.Context, caller db.AuthenticatedCaller, id uuid.UUID) (db.Environment, error) {
+func (m *Manager) visible(ctx context.Context, caller *db.AuthenticatedCaller, id uuid.UUID) (db.Environment, error) {
 	e, err := db.GetEnvironment(ctx, m.db, id)
-	if err != nil {
-		return db.Environment{}, err
+	if err != nil || caller == nil {
+		return e, err
 	}
 
 	if e.CallerID != caller.ID {
@@ -233,14 +197,12 @@ func (m *Manager) owned(ctx context.Context, caller db.AuthenticatedCaller, id u
 	return e, nil
 }
 
-// Expose adds the proxy access URL and token to an environment that has an
-// endpoint and is still active, for returning to its owner.
 func (m *Manager) Expose(e db.Environment) db.Environment {
-	if m.proxy == nil || e.Endpoint == nil || (e.Status != db.EnvProvisioning && e.Status != db.EnvRunning) {
+	if m.Proxy == nil || e.Endpoint == nil || (e.Status != db.EnvProvisioning && e.Status != db.EnvRunning) {
 		return e
 	}
 
-	url, token := m.proxy.AccessURL(e.ID), m.proxy.AccessToken(e.ID)
+	url, token := m.Proxy.AccessURL(e.ID), m.Proxy.AccessToken(e.ID)
 	e.AccessURL, e.AccessToken = &url, &token
 	return e
 }
@@ -253,7 +215,7 @@ func (m *Manager) HasProvider(t provider.Type) bool {
 func (m *Manager) Status(ctx context.Context, e db.Environment) (provider.Status, error) {
 	p, ok := m.providers[e.Provider]
 	if !ok {
-		return "", fmt.Errorf("delete environment on %s: %w", e.Provider, ErrProviderUnavailable)
+		return "", fmt.Errorf("status of environment %s on %s: %w", e.ID, e.Provider, ErrProviderUnavailable)
 	}
 
 	return p.Status(ctx, e.ID.String())
@@ -398,23 +360,16 @@ func (m *Manager) RemoveOrphans(ctx context.Context) ([]string, error) {
 	return removed, errors.Join(errs...)
 }
 
-// Resume watches environments a previous eem process left PROVISIONING until
-// they become ready or fail, instead of leaving them for the worker's stuck
-// check. One whose containers were never created reports missing and fails.
-// It assumes a single eem process, since another's in-flight creations would
-// also look missing.
+// Resume assumes one eem process: another's in-flight creations would look missing.
 func (m *Manager) Resume(ctx context.Context) (int, error) {
 	pending, err := db.ListStuckProvisioning(ctx, m.db, 0)
 	if err != nil {
 		return 0, fmt.Errorf("resume provisioning: %w", err)
 	}
 
-	m.watching.Add(len(pending))
-	m.wg.Go(func() {
-		for _, e := range pending {
-			m.provisioned <- e.ID
-		}
-	})
+	for _, e := range pending {
+		m.wg.Go(func() { m.awaitReady(e.ID) })
+	}
 	return len(pending), nil
 }
 
@@ -422,9 +377,10 @@ func (m *Manager) Wait() {
 	m.wg.Wait()
 }
 
-func (m *Manager) WaitReady() {
+// Stop abandons readiness checks; Resume picks them up on the next start.
+func (m *Manager) Stop() {
+	m.stopOnce.Do(func() { close(m.stop) })
 	m.wg.Wait()
-	m.watching.Wait()
 }
 
 func (m *Manager) provision(ctx context.Context, p provider.Provider, id uuid.UUID, req CreateRequest) {
@@ -439,16 +395,15 @@ func (m *Manager) provision(ctx context.Context, p provider.Provider, id uuid.UU
 		return
 	}
 
-	m.watching.Add(1)
-	m.provisioned <- id
+	m.awaitReady(id)
 }
 
-func (m *Manager) watch() {
-	for id := range m.provisioned {
-		if m.checkProvisioned(id) {
-			m.watching.Done()
-		} else {
-			time.AfterFunc(readyInterval, func() { m.provisioned <- id })
+func (m *Manager) awaitReady(id uuid.UUID) {
+	for !m.checkProvisioned(id) {
+		select {
+		case <-m.stop:
+			return
+		case <-time.After(readyInterval):
 		}
 	}
 }
@@ -491,7 +446,7 @@ func (m *Manager) checkProvisioned(id uuid.UUID) bool {
 }
 
 func (m *Manager) backend(ctx context.Context, p provider.Provider, id uuid.UUID) string {
-	if m.proxy == nil {
+	if m.Proxy == nil {
 		return ""
 	}
 
@@ -518,7 +473,7 @@ type reservation struct {
 }
 
 func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, px *proxy.Proxy, req CreateRequest) (reservation, error) {
-	if priority(req.Type) == 0 {
+	if !req.Type.Valid() {
 		return reservation{}, fmt.Errorf("%w: %q", ErrInvalidEnvType, req.Type)
 	}
 
@@ -538,7 +493,7 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, px *proxy.Proxy, 
 
 		apiKeyID = &req.APIKeyID
 		role = limits.Role
-		if limits.PermittedEnv != nil && priority(*limits.PermittedEnv) < priority(permitted) {
+		if limits.PermittedEnv != nil && limits.PermittedEnv.Rank() < permitted.Rank() {
 			permitted = *limits.PermittedEnv
 		}
 	}
@@ -639,7 +594,7 @@ func reserve(ctx context.Context, tx pgx.Tx, pt provider.Type, px *proxy.Proxy, 
 }
 
 func authorize(role db.Role, permitted db.EnvType, t db.EnvType) error {
-	if priority(t) > priority(permitted) {
+	if t.Rank() > permitted.Rank() {
 		return fmt.Errorf("%s with permission %s: %w", t, permitted, ErrNotPermitted)
 	}
 
@@ -678,7 +633,7 @@ func makeRoom(ctx context.Context, tx pgx.Tx, pt provider.Type, t db.EnvType, ne
 	}
 
 	slices.SortStableFunc(candidates, func(a, b db.Environment) int {
-		return priority(a.Type) - priority(b.Type)
+		return a.Type.Rank() - b.Type.Rank()
 	})
 
 	var victims []db.Environment
@@ -740,14 +695,10 @@ func atLeastZero(r provider.Resources) provider.Resources {
 	return provider.Resources{CPUMillis: max(0, r.CPUMillis), RAMMB: max(0, r.RAMMB), DiskGB: max(0, r.DiskGB)}
 }
 
-func priority(t db.EnvType) int {
-	return t.Rank()
-}
-
 func lowerPriority(t db.EnvType) []db.EnvType {
 	var lower []db.EnvType
 	for _, et := range db.EnvTypes {
-		if priority(et) < priority(t) {
+		if et.Rank() < t.Rank() {
 			lower = append(lower, et)
 		}
 	}

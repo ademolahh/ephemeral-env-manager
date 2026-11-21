@@ -105,14 +105,9 @@ func (h *Handler) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	callerID, err := db.UpsertGithubCaller(r.Context(), h.db, db.NewCaller{
-		GithubLogin:     &user.Login,
-		GithubID:        &user.ID,
-		PermittedEnv:    db.EnvRegularTesting,
-		Quota:           defaultQuota,
-		CostBudgetTotal: defaultCostBudget,
-		BudgetExpiresAt: time.Now().Add(defaultBudgetPeriod).UTC().Truncate(time.Second),
-	})
+	nc := db.DefaultCaller(db.EnvRegularTesting)
+	nc.GithubLogin, nc.GithubID = &user.Login, &user.ID
+	callerID, err := db.UpsertGithubCaller(r.Context(), h.db, nc)
 	if err != nil {
 		slog.Error("github login", "err", err)
 		loginFailed(w, r, "internal")

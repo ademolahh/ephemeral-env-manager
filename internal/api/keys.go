@@ -16,7 +16,6 @@ import (
 )
 
 const (
-	defaultKeyTTL = 30 * 24 * time.Hour
 	maxKeyTTL     = 365 * 24 * time.Hour
 	maxKeyNameLen = 64
 )
@@ -89,7 +88,7 @@ func (h *Handler) newAPIKey(ctx context.Context, callerID uuid.UUID, req createK
 		return db.NewAPIKey{}, badRequest("role must be user or agent")
 	}
 
-	ttl := defaultKeyTTL
+	ttl := db.DefaultKeyTTL
 	if req.ExpiresIn != "" {
 		d, err := time.ParseDuration(req.ExpiresIn)
 		if err != nil || d <= 0 || d > maxKeyTTL {
@@ -108,8 +107,8 @@ func (h *Handler) newAPIKey(ctx context.Context, callerID uuid.UUID, req createK
 	}
 
 	if req.PermittedEnv != nil {
-		if req.PermittedEnv.Rank() == 0 {
-			return db.NewAPIKey{}, badRequest("permitted_env must be REGULAR_TESTING, PR_REVIEW or PROD_BUG")
+		if !req.PermittedEnv.Valid() {
+			return db.NewAPIKey{}, badRequest("permitted_env must be %s", oneOf(db.EnvTypes))
 		}
 		if req.PermittedEnv.Rank() > owner.PermittedEnv.Rank() {
 			return db.NewAPIKey{}, fmt.Errorf("key permission %s above caller permission %s: %w", *req.PermittedEnv, owner.PermittedEnv, env.ErrNotPermitted)
@@ -151,9 +150,6 @@ func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request, callerID uuid
 		return
 	}
 
-	if keys == nil {
-		keys = []db.APIKey{}
-	}
 	writeJSON(w, http.StatusOK, listKeysResponse{Keys: keys})
 }
 

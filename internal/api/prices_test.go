@@ -67,7 +67,6 @@ func TestSetPricesRejected(t *testing.T) {
 		want string
 	}{
 		{name: "unknown provider", path: "/prices/aws", body: `{"per_cpu_core": 1000000, "per_ram_gb": 1000000, "per_disk_gb": 1000000}`, code: http.StatusBadRequest, want: "provider not configured"},
-		{name: "unconfigured provider", path: "/prices/cloud", body: `{"per_cpu_core": 1000000, "per_ram_gb": 1000000, "per_disk_gb": 1000000}`, code: http.StatusBadRequest, want: "provider not configured"},
 		{name: "malformed json", path: "/prices/docker", body: `{`, code: http.StatusBadRequest, want: "invalid request body"},
 		{name: "unknown field", path: "/prices/docker", body: `{"cpu": 1000000}`, code: http.StatusBadRequest, want: "unknown field"},
 		{name: "missing price", path: "/prices/docker", body: `{"per_cpu_core": 1000000, "per_ram_gb": 1000000}`, code: http.StatusBadRequest, want: "required"},

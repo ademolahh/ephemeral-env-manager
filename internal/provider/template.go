@@ -32,14 +32,13 @@ type Service struct {
 	Aliases     []string          `json:"aliases,omitempty"`
 }
 
-// Smallest per-container limits. Docker treats a zero limit as unlimited and
-// refuses memory below 6 MiB.
+// Docker treats a zero limit as unlimited and refuses memory below 6 MiB.
 const (
 	MinCPUMillis = 10
 	MinRAMMB     = 16
 )
 
-// Resources are CPU in millicores (1000 = one core), RAM in MiB and disk in GB.
+// CPU in millicores, RAM in MiB, disk in GB.
 type Resources struct {
 	CPUMillis int `json:"cpu_millis"`
 	RAMMB     int `json:"ram_mb"`
@@ -51,8 +50,7 @@ func (r Resources) String() string {
 		strconv.Itoa(r.RAMMB) + " MiB ram, " + strconv.Itoa(r.DiskGB) + " GB disk"
 }
 
-// Prices are hourly prices in micro-USD per CPU core, per GB of RAM and per
-// GB of disk.
+// Micro-USD per hour.
 type Prices struct {
 	PerCPUCore int64
 	PerRAMGB   int64

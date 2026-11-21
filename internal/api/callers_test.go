@@ -39,9 +39,6 @@ func TestGetBudgetShowsGivenAndUsed(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode budget: %v", err)
 	}
-	if got.Currency != "USD cents" {
-		t.Errorf("currency = %q, want USD cents", got.Currency)
-	}
 	if want := int64(10000); got.CostBudget != want {
 		t.Errorf("cost budget = %d, want %d", got.CostBudget, want)
 	}
@@ -92,7 +89,7 @@ func (s server) putBudget(t *testing.T, key, id, body string) *httptest.Response
 }
 
 func futureRFC3339() string {
-	return time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second).Format(time.RFC3339)
+	return time.Now().Add(db.DefaultBudgetPeriod).UTC().Truncate(time.Second).Format(time.RFC3339)
 }
 
 func TestSetBudget(t *testing.T) {
@@ -316,10 +313,10 @@ func TestCreateCallerMinimalPrivilege(t *testing.T) {
 	if limits.PermittedEnv != db.EnvRegularTesting {
 		t.Errorf("stored permitted_env = %s, want REGULAR_TESTING", limits.PermittedEnv)
 	}
-	if limits.Quota != defaultQuota || limits.CostBudgetTotal != defaultCostBudget {
-		t.Errorf("stored quota, budget = %+v, %d, want %+v, %d", limits.Quota, limits.CostBudgetTotal, defaultQuota, defaultCostBudget)
+	if limits.Quota != db.DefaultQuota || limits.CostBudgetTotal != db.DefaultCostBudget {
+		t.Errorf("stored quota, budget = %+v, %d, want %+v, %d", limits.Quota, limits.CostBudgetTotal, db.DefaultQuota, db.DefaultCostBudget)
 	}
-	wantExpiry := before.Add(defaultBudgetPeriod)
+	wantExpiry := before.Add(db.DefaultBudgetPeriod)
 	if got.BudgetExpiresAt.Before(wantExpiry.Add(-time.Minute)) || got.BudgetExpiresAt.After(wantExpiry.Add(time.Minute)) {
 		t.Errorf("budget_expires_at = %v, want about %v", got.BudgetExpiresAt, wantExpiry)
 	}

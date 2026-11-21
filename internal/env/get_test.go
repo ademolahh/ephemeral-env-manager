@@ -39,7 +39,7 @@ func TestGetAccess(t *testing.T) {
 			t.Errorf("Get() by other %s error = %v, want ErrEnvNotFound", role, err)
 		}
 	}
-	if _, _, err := m.Get(context.Background(), db.AuthenticatedCaller{}, e.ID); !errors.Is(err, db.ErrEnvNotFound) {
+	if _, _, err := m.Get(context.Background(), &db.AuthenticatedCaller{}, e.ID); !errors.Is(err, db.ErrEnvNotFound) {
 		t.Errorf("Get() by zero caller error = %v, want ErrEnvNotFound", err)
 	}
 	if _, _, err := m.Get(context.Background(), owner(callerID), uuid.New()); !errors.Is(err, db.ErrEnvNotFound) {
@@ -52,14 +52,14 @@ func TestGetAny(t *testing.T) {
 	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: &fakeProvider{status: provider.StatusRunning}})
 	e := createRunning(t, m, tx, callerID)
 
-	got, status, err := m.GetAny(context.Background(), e.ID)
+	got, status, err := m.Get(context.Background(), nil, e.ID)
 	if err != nil {
 		t.Fatalf("GetAny() error = %v", err)
 	}
 	if got.ID != e.ID || status != provider.StatusRunning {
 		t.Errorf("GetAny() = %s %s, want %s %s", got.ID, status, e.ID, provider.StatusRunning)
 	}
-	if _, _, err := m.GetAny(context.Background(), uuid.New()); !errors.Is(err, db.ErrEnvNotFound) {
+	if _, _, err := m.Get(context.Background(), nil, uuid.New()); !errors.Is(err, db.ErrEnvNotFound) {
 		t.Errorf("GetAny() unknown id error = %v, want ErrEnvNotFound", err)
 	}
 }

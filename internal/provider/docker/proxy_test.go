@@ -63,7 +63,7 @@ func routedTemplate() provider.Template {
 
 func TestCreateConnectsProxy(t *testing.T) {
 	d := testDocker(t)
-	d.proxy = startProxy(t, d)
+	d.cfg.Proxy = startProxy(t, d)
 	ctx := context.Background()
 	id := newEnvID(t, d)
 
@@ -71,8 +71,8 @@ func TestCreateConnectsProxy(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	if !proxyAttached(t, d, id, d.proxy) {
-		t.Fatalf("proxy %s not attached to %s", d.proxy, networkName(id))
+	if !proxyAttached(t, d, id, d.cfg.Proxy) {
+		t.Fatalf("proxy %s not attached to %s", d.cfg.Proxy, networkName(id))
 	}
 
 	addr, err := d.Address(ctx, id)
@@ -85,7 +85,7 @@ func TestCreateConnectsProxy(t *testing.T) {
 
 	reached := false
 	for range 20 {
-		if execExitCode(t, d, d.proxy, "redis-cli", "-h", workloadName(id), "-p", "6379", "ping") == 0 {
+		if execExitCode(t, d, d.cfg.Proxy, "redis-cli", "-h", workloadName(id), "-p", "6379", "ping") == 0 {
 			reached = true
 			break
 		}
@@ -97,7 +97,7 @@ func TestCreateConnectsProxy(t *testing.T) {
 
 func TestAddressRoutesToSharedAlias(t *testing.T) {
 	d := testDocker(t)
-	d.proxy = startProxy(t, d)
+	d.cfg.Proxy = startProxy(t, d)
 	ctx := context.Background()
 	id := newEnvID(t, d)
 
@@ -130,7 +130,7 @@ func TestAddressRoutesToSharedAlias(t *testing.T) {
 
 	reached := false
 	for range 20 {
-		if execExitCode(t, d, d.proxy, "redis-cli", "-h", host, "-p", "6379", "ping") == 0 {
+		if execExitCode(t, d, d.cfg.Proxy, "redis-cli", "-h", host, "-p", "6379", "ping") == 0 {
 			reached = true
 			break
 		}
@@ -149,7 +149,7 @@ func TestAddressRoutesToSharedAlias(t *testing.T) {
 
 func TestDeleteDisconnectsProxy(t *testing.T) {
 	d := testDocker(t)
-	d.proxy = startProxy(t, d)
+	d.cfg.Proxy = startProxy(t, d)
 	ctx := context.Background()
 	id := newEnvID(t, d)
 
@@ -165,7 +165,7 @@ func TestDeleteDisconnectsProxy(t *testing.T) {
 		t.Errorf("network inspect error = %v, want not found", err)
 	}
 
-	p, err := d.cli.ContainerInspect(ctx, d.proxy, client.ContainerInspectOptions{})
+	p, err := d.cli.ContainerInspect(ctx, d.cfg.Proxy, client.ContainerInspectOptions{})
 	if err != nil {
 		t.Fatalf("inspect proxy: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestDeleteWithProxyNotAttached(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	d.proxy = startProxy(t, d)
+	d.cfg.Proxy = startProxy(t, d)
 	if err := d.Delete(ctx, id); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
@@ -195,7 +195,7 @@ func TestDeleteWithProxyNotAttached(t *testing.T) {
 
 func TestCreateMissingProxyRollsBack(t *testing.T) {
 	d := testDocker(t)
-	d.proxy = "eem-test-proxy-missing-" + uuid.NewString()
+	d.cfg.Proxy = "eem-test-proxy-missing-" + uuid.NewString()
 	ctx := context.Background()
 	id := newEnvID(t, d)
 

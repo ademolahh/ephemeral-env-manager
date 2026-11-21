@@ -1,4 +1,3 @@
-// Package logging configures the process-wide slog logger.
 package logging
 
 import (
@@ -8,9 +7,6 @@ import (
 	"strings"
 )
 
-// Setup installs the default slog logger for service. LOG_FORMAT is text
-// (default) or json, and LOG_LEVEL is debug, info (default), warn or error.
-// The standard log package writes through the same handler.
 func Setup(service string) error {
 	var level slog.Level
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
@@ -34,7 +30,6 @@ func Setup(service string) error {
 	return nil
 }
 
-// Fatal logs msg, and err when there is one, at error level and exits.
 func Fatal(msg string, err error) {
 	if err != nil {
 		slog.Error(msg, "err", err)

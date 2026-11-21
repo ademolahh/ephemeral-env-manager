@@ -11,11 +11,8 @@ import (
 
 	"github.com/ademolahh/ephemeral-env-manager/internal/admin"
 	"github.com/ademolahh/ephemeral-env-manager/internal/db"
-	"github.com/ademolahh/ephemeral-env-manager/internal/env"
 	"github.com/ademolahh/ephemeral-env-manager/internal/logging"
-	"github.com/ademolahh/ephemeral-env-manager/internal/provider"
-	"github.com/ademolahh/ephemeral-env-manager/internal/provider/docker"
-	"github.com/ademolahh/ephemeral-env-manager/internal/proxy"
+	"github.com/ademolahh/ephemeral-env-manager/internal/setup"
 	"github.com/ademolahh/ephemeral-env-manager/internal/worker"
 )
 
@@ -48,32 +45,10 @@ func main() {
 	}
 	defer pool.Close()
 
-	px, err := proxy.FromEnv()
+	envs, d, err := setup.Manager(ctx, pool)
 	if err != nil {
-		logging.Fatal("proxy", err)
+		logging.Fatal("environments", err)
 	}
-
-	dockerOpts, err := docker.OptionsFromEnv()
-	if err != nil {
-		logging.Fatal("docker", err)
-	}
-
-	var envOpts []env.Option
-	if px != nil {
-		dockerOpts = append(dockerOpts, docker.WithProxy(px.Container))
-		envOpts = append(envOpts, env.WithProxy(px))
-	}
-
-	d, err := docker.New(dockerOpts...)
-	if err != nil {
-		logging.Fatal("docker", err)
-	}
-
-	if err := d.Ping(ctx); err != nil {
-		logging.Fatal("docker", err)
-	}
-
-	envs := env.NewManager(pool, map[provider.Type]provider.Provider{provider.Docker: d}, envOpts...)
 
 	admin.Start(ctx, map[string]admin.Check{"postgres": pool.Ping, "docker": d.Ping})
 
@@ -81,5 +56,5 @@ func main() {
 	worker.New(pool, envs, interval).Run(ctx)
 
 	slog.Info("waiting for in-flight deletions")
-	envs.Wait()
+	envs.Stop()
 }

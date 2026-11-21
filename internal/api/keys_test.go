@@ -100,7 +100,7 @@ func TestCreateKeyDefaults(t *testing.T) {
 	if got.Role != db.RoleUser || got.PermittedEnv != nil || got.CostCap != nil {
 		t.Errorf("key = %+v, want user key without limits", got)
 	}
-	if want := before.Add(defaultKeyTTL); got.ExpiresAt.Before(want.Add(-time.Minute)) || got.ExpiresAt.After(want.Add(time.Minute)) {
+	if want := before.Add(db.DefaultKeyTTL); got.ExpiresAt.Before(want.Add(-time.Minute)) || got.ExpiresAt.After(want.Add(time.Minute)) {
 		t.Errorf("expires_at = %v, want about %v", got.ExpiresAt, want)
 	}
 }

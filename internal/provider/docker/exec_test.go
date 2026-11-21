@@ -27,20 +27,20 @@ func TestExec(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("stdout", func(t *testing.T) {
-		out, err := d.Exec(ctx, id, []string{"echo", "hello"})
-		if err != nil || out != "hello\n" {
-			t.Errorf("Exec() = %q, %v, want hello", out, err)
+		res, err := d.Exec(ctx, id, []string{"echo", "hello"})
+		if err != nil || res.Output != "hello\n" || res.Truncated {
+			t.Errorf("Exec() = %+v, %v, want hello, not truncated", res, err)
 		}
 	})
 
 	t.Run("stderr and exit code", func(t *testing.T) {
-		out, err := d.Exec(ctx, id, []string{"sh", "-c", "echo out; echo err >&2; exit 3"})
+		res, err := d.Exec(ctx, id, []string{"sh", "-c", "echo out; echo err >&2; exit 3"})
 		var exit *provider.ExitError
 		if !errors.As(err, &exit) || exit.Code != 3 {
 			t.Fatalf("Exec() error = %v, want exit code 3", err)
 		}
-		if out != "out\nerr\n" && out != "err\nout\n" {
-			t.Errorf("Exec() output = %q, want out and err", out)
+		if res.Output != "out\nerr\n" && res.Output != "err\nout\n" {
+			t.Errorf("Exec() output = %q, want out and err", res.Output)
 		}
 	})
 
@@ -53,12 +53,12 @@ func TestExec(t *testing.T) {
 	})
 
 	t.Run("output capped", func(t *testing.T) {
-		out, err := d.Exec(ctx, id, []string{"sh", "-c", "head -c 3000000 /dev/zero"})
+		res, err := d.Exec(ctx, id, []string{"sh", "-c", "head -c 3000000 /dev/zero"})
 		if err != nil {
 			t.Fatalf("Exec() error = %v", err)
 		}
-		if len(out) != maxExecOutput {
-			t.Errorf("len(output) = %d, want %d", len(out), maxExecOutput)
+		if len(res.Output) != maxExecOutput || !res.Truncated {
+			t.Errorf("output = %d bytes, truncated %v, want %d and truncated", len(res.Output), res.Truncated, maxExecOutput)
 		}
 	})
 
@@ -77,10 +77,15 @@ func TestExec(t *testing.T) {
 	})
 }
 
-func TestExecEmptyCommand(t *testing.T) {
-	d := testDocker(t)
-	if _, err := d.Exec(context.Background(), "x", nil); !errors.Is(err, provider.ErrEmptyCommand) {
-		t.Errorf("Exec() error = %v, want ErrEmptyCommand", err)
+func TestCappedBuffer(t *testing.T) {
+	b := &cappedBuffer{max: 4}
+	_, _ = b.Write([]byte("ab"))
+	_, _ = b.Write([]byte("cd"))
+	if b.String() != "abcd" || b.truncated {
+		t.Fatalf("after writing exactly max: %q, truncated %v, want abcd, not truncated", b.String(), b.truncated)
+	}
+	if n, _ := b.Write([]byte("e")); n != 1 || b.String() != "abcd" || !b.truncated {
+		t.Errorf("after overflow: n %d, %q, truncated %v, want 1, abcd, truncated", n, b.String(), b.truncated)
 	}
 }
 

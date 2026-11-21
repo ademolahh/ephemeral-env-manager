@@ -58,7 +58,7 @@ func TestCreateDocker(t *testing.T) {
 	tx, callerID := setup(t)
 	ctx := context.Background()
 
-	d, err := docker.New(docker.WithInstance("test-" + uuid.NewString()))
+	d, err := docker.New(docker.Config{Instance: "test-" + uuid.NewString()})
 	if err != nil {
 		t.Fatalf("docker.New() error = %v", err)
 	}
@@ -91,7 +91,7 @@ func TestCreateDocker(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	m.WaitReady()
+	m.Wait()
 	env, err := db.GetEnvironment(ctx, tx, id)
 	if err != nil {
 		t.Fatalf("GetEnvironment() error = %v", err)
@@ -116,7 +116,7 @@ func TestCreateDockerFailure(t *testing.T) {
 	tx, callerID := setup(t)
 	ctx := context.Background()
 
-	d, err := docker.New(docker.WithInstance("test-" + uuid.NewString()))
+	d, err := docker.New(docker.Config{Instance: "test-" + uuid.NewString()})
 	if err != nil {
 		t.Fatalf("docker.New() error = %v", err)
 	}

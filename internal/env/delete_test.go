@@ -25,7 +25,7 @@ func createRunning(t *testing.T, m *Manager, q db.DBTX, callerID uuid.UUID) db.E
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 	got, err := db.GetEnvironment(context.Background(), q, e.ID)
 	if err != nil {
 		t.Fatalf("GetEnvironment() error = %v", err)
@@ -33,7 +33,7 @@ func createRunning(t *testing.T, m *Manager, q db.DBTX, callerID uuid.UUID) db.E
 	return got
 }
 
-func otherCaller(t *testing.T, q db.DBTX, role db.Role) db.AuthenticatedCaller {
+func otherCaller(t *testing.T, q db.DBTX, role db.Role) *db.AuthenticatedCaller {
 	t.Helper()
 	id, err := db.CreateCaller(context.Background(), q, db.NewCaller{
 		PermittedEnv:    db.EnvProdBug,
@@ -44,11 +44,11 @@ func otherCaller(t *testing.T, q db.DBTX, role db.Role) db.AuthenticatedCaller {
 	if err != nil {
 		t.Fatalf("CreateCaller() error = %v", err)
 	}
-	return db.AuthenticatedCaller{ID: id, Role: role}
+	return &db.AuthenticatedCaller{ID: id, Role: role}
 }
 
-func owner(callerID uuid.UUID) db.AuthenticatedCaller {
-	return db.AuthenticatedCaller{ID: callerID, Role: db.RoleUser}
+func owner(callerID uuid.UUID) *db.AuthenticatedCaller {
+	return &db.AuthenticatedCaller{ID: callerID, Role: db.RoleUser}
 }
 
 func status(t *testing.T, q db.DBTX, id uuid.UUID) db.Environment {
@@ -114,14 +114,14 @@ func TestDeleteAny(t *testing.T) {
 	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: &fakeProvider{}})
 	e := createRunning(t, m, tx, callerID)
 
-	if _, err := m.DeleteAny(context.Background(), e.ID); err != nil {
+	if _, err := m.Delete(context.Background(), nil, e.ID); err != nil {
 		t.Fatalf("DeleteAny() error = %v", err)
 	}
 	m.Wait()
 	if got := status(t, tx, e.ID).Status; got != db.EnvDeleted {
 		t.Errorf("status = %s, want %s", got, db.EnvDeleted)
 	}
-	if _, err := m.DeleteAny(context.Background(), uuid.New()); !errors.Is(err, db.ErrEnvNotFound) {
+	if _, err := m.Delete(context.Background(), nil, uuid.New()); !errors.Is(err, db.ErrEnvNotFound) {
 		t.Errorf("DeleteAny() unknown id error = %v, want ErrEnvNotFound", err)
 	}
 }

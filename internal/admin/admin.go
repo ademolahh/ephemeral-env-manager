@@ -1,5 +1,3 @@
-// Package admin serves each service's operational endpoints: /healthz for
-// liveness, /readyz for dependency checks and /metrics for Prometheus.
 package admin
 
 import (
@@ -23,10 +21,8 @@ const (
 	checkTimeout = 2 * time.Second
 )
 
-// Check reports whether one dependency is usable.
 type Check func(context.Context) error
 
-// Addr is ADMIN_ADDR, or DefaultAddr when it is unset.
 func Addr() string {
 	if v := os.Getenv("ADMIN_ADDR"); v != "" {
 		return v
@@ -40,6 +36,7 @@ func Handler(checks map[string]Check) http.Handler {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("ok\n"))
 	})
+
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		results, ok := run(r.Context(), checks)
 		status := http.StatusOK
@@ -50,6 +47,7 @@ func Handler(checks map[string]Check) http.Handler {
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(results)
 	})
+
 	mux.Handle("GET /metrics", promhttp.Handler())
 	return mux
 }
@@ -79,7 +77,6 @@ func run(ctx context.Context, checks map[string]Check) (map[string]string, bool)
 	return results, ok
 }
 
-// Serve runs the admin server on addr until ctx is done.
 func Serve(ctx context.Context, addr string, checks map[string]Check) error {
 	srv := &http.Server{Addr: addr, Handler: Handler(checks), ReadHeaderTimeout: 5 * time.Second}
 	errs := make(chan error, 1)
@@ -100,9 +97,7 @@ func Serve(ctx context.Context, addr string, checks map[string]Check) error {
 	return nil
 }
 
-// Probe asks the local admin server on addr whether the service is ready. The
-// images are distroless with no curl, so container healthchecks run the
-// service binary with -healthcheck, which calls this.
+// Probe backs -healthcheck: the distroless images have no curl.
 func Probe(addr string) error {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -127,8 +122,6 @@ func Probe(addr string) error {
 	return nil
 }
 
-// HandleHealthcheckFlag parses the command line and, when -healthcheck is
-// given, probes the running service's /readyz and exits 0 if it is ready.
 func HandleHealthcheckFlag() {
 	check := flag.Bool("healthcheck", false, "probe this service's /readyz on ADMIN_ADDR and exit 0 when ready")
 	flag.Parse()
@@ -143,8 +136,6 @@ func HandleHealthcheckFlag() {
 	os.Exit(0)
 }
 
-// Start runs the admin server in the background and exits the process if it
-// cannot listen.
 func Start(ctx context.Context, checks map[string]Check) {
 	go func() {
 		if err := Serve(ctx, Addr(), checks); err != nil {

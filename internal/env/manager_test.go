@@ -96,11 +96,14 @@ func (f *fakeProvider) Address(ctx context.Context, id string) (string, error) {
 	return f.address, f.addressErr
 }
 
-func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (string, error) {
-	return "", nil
+func (f *fakeProvider) Exec(ctx context.Context, id string, cmd []string) (provider.ExecResult, error) {
+	return provider.ExecResult{}, nil
 }
 
 func (f *fakeProvider) List(ctx context.Context) ([]string, error) { return nil, nil }
+
+// otherProvider stands in for a second provider in multi-provider tests.
+const otherProvider provider.Type = "other"
 
 var dockerPrices = provider.Prices{
 	PerCPUCore: 4048,
@@ -111,7 +114,7 @@ var dockerPrices = provider.Prices{
 var dashboard = provider.Template{
 	Name:            "clear-dashboard",
 	Version:         "v1",
-	Providers:       []provider.Type{provider.Docker, provider.Cloud},
+	Providers:       []provider.Type{provider.Docker, otherProvider},
 	DefaultProvider: provider.Docker,
 	TTL:             4 * time.Hour,
 	Workload:        provider.Workload{Resources: provider.Resources{CPUMillis: 1000, RAMMB: 4096, DiskGB: 10}},
@@ -179,7 +182,7 @@ func TestCreate(t *testing.T) {
 	if created.Status != db.EnvProvisioning {
 		t.Errorf("Create() status = %s, want %s", created.Status, db.EnvProvisioning)
 	}
-	m.WaitReady()
+	m.Wait()
 	id := created.ID
 
 	if len(fake.calls) != 1 {
@@ -233,27 +236,27 @@ func TestCreateExplicitProvider(t *testing.T) {
 	tx, callerID := setup(t)
 	ctx := context.Background()
 	cloudPrices := provider.Prices{PerCPUCore: 50000}
-	if err := db.SetHourlyPrices(ctx, tx, provider.Cloud, cloudPrices); err != nil {
+	if err := db.SetHourlyPrices(ctx, tx, otherProvider, cloudPrices); err != nil {
 		t.Fatalf("SetHourlyPrices() error = %v", err)
 	}
-	if err := db.SetCapacityPool(ctx, tx, provider.Cloud, provider.Resources{CPUMillis: 100000, RAMMB: 102400, DiskGB: 1000}); err != nil {
+	if err := db.SetCapacityPool(ctx, tx, otherProvider, provider.Resources{CPUMillis: 100000, RAMMB: 102400, DiskGB: 1000}); err != nil {
 		t.Fatalf("SetCapacityPool() error = %v", err)
 	}
 	docker := &fakeProvider{}
 	cloud := &fakeProvider{}
-	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: docker, provider.Cloud: cloud})
+	m := NewManager(tx, map[provider.Type]provider.Provider{provider.Docker: docker, otherProvider: cloud})
 
 	created, err := m.Create(ctx, CreateRequest{
 		CallerID: callerID,
 		Type:     db.EnvRegularTesting,
-		Provider: provider.Cloud,
+		Provider: otherProvider,
 		Workload: "app:latest",
 		Template: dashboard,
 	})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 	id := created.ID
 	if len(docker.calls) != 0 || len(cloud.calls) != 1 {
 		t.Errorf("provider calls docker=%d cloud=%d, want 0 and 1", len(docker.calls), len(cloud.calls))
@@ -263,8 +266,8 @@ func TestCreateExplicitProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEnvironment() error = %v", err)
 	}
-	if env.Provider != provider.Cloud {
-		t.Errorf("provider = %s, want %s", env.Provider, provider.Cloud)
+	if env.Provider != otherProvider {
+		t.Errorf("provider = %s, want %s", env.Provider, otherProvider)
 	}
 	if want := dashboard.HourlyCost(cloudPrices); env.HourlyRate != want {
 		t.Errorf("hourly_rate = %d, want %d", env.HourlyRate, want)
@@ -286,7 +289,7 @@ func TestCreateProviderFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v, want nil (provisioning is async)", err)
 	}
-	m.WaitReady()
+	m.Wait()
 
 	env, err := db.GetEnvironment(ctx, tx, created.ID)
 	if err != nil {
@@ -319,7 +322,7 @@ func TestCreateProviderPanics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 
 	env, err := db.GetEnvironment(context.Background(), tx, created.ID)
 	if err != nil {
@@ -354,7 +357,7 @@ func TestCreateReturnsBeforeProvisioning(t *testing.T) {
 	}
 	cancel()
 	close(release)
-	m.WaitReady()
+	m.Wait()
 
 	if len(fake.calls) != 1 || fake.calls[0].ctxErr != nil {
 		t.Fatalf("provider calls = %+v, want one call with live context", fake.calls)
@@ -388,13 +391,13 @@ func TestCreateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 
 	second, err := m.Create(ctx, req)
 	if err != nil {
 		t.Fatalf("Create() retry error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 
 	if second.ID != first.ID {
 		t.Errorf("retry id = %s, want %s", second.ID, first.ID)
@@ -411,7 +414,7 @@ func TestCreateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() new key error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 	if third.ID == first.ID {
 		t.Error("new key returned existing environment")
 	}
@@ -421,12 +424,12 @@ func TestCreateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() no key error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 	fifth, err := m.Create(ctx, req)
 	if err != nil {
 		t.Fatalf("Create() no key again error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 	if fourth.ID == fifth.ID {
 		t.Error("requests without a key returned the same environment")
 	}
@@ -453,12 +456,12 @@ func TestCreateIdempotencyKeyPerCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create(alice) error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 	b, err := m.Create(ctx, CreateRequest{CallerID: bob, Type: db.EnvRegularTesting, Workload: "app", Template: dashboard, IdempotencyKey: "same"})
 	if err != nil {
 		t.Fatalf("Create(bob) error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 
 	if a.ID == b.ID {
 		t.Error("callers sharing a key got the same environment")
@@ -478,7 +481,7 @@ func TestCreateIdempotentReplaySkipsChecks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	m.WaitReady()
+	m.Wait()
 	if err := db.SetCallerBudget(ctx, tx, callerID, provider.Resources{}, 0, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("SetCallerBudget() error = %v", err)
 	}
@@ -514,27 +517,27 @@ func TestCreateRejected(t *testing.T) {
 		{
 			name: "provider not in template",
 			providers: map[provider.Type]provider.Provider{
-				provider.Cloud: &fakeProvider{},
+				otherProvider: &fakeProvider{},
 			},
 			req: func(callerID uuid.UUID) CreateRequest {
-				return CreateRequest{CallerID: callerID, Type: db.EnvRegularTesting, Provider: provider.Cloud, Workload: "app", Template: dockerOnly}
+				return CreateRequest{CallerID: callerID, Type: db.EnvRegularTesting, Provider: otherProvider, Workload: "app", Template: dockerOnly}
 			},
 			want: ErrProviderNotAllowed,
 		},
 		{
 			name: "provider not configured",
 			req: func(callerID uuid.UUID) CreateRequest {
-				return CreateRequest{CallerID: callerID, Type: db.EnvRegularTesting, Provider: provider.Cloud, Workload: "app", Template: dashboard}
+				return CreateRequest{CallerID: callerID, Type: db.EnvRegularTesting, Provider: otherProvider, Workload: "app", Template: dashboard}
 			},
 			want: ErrProviderUnavailable,
 		},
 		{
 			name: "no prices",
 			providers: map[provider.Type]provider.Provider{
-				provider.Cloud: &fakeProvider{},
+				otherProvider: &fakeProvider{},
 			},
 			req: func(callerID uuid.UUID) CreateRequest {
-				return CreateRequest{CallerID: callerID, Type: db.EnvRegularTesting, Provider: provider.Cloud, Workload: "app", Template: dashboard}
+				return CreateRequest{CallerID: callerID, Type: db.EnvRegularTesting, Provider: otherProvider, Workload: "app", Template: dashboard}
 			},
 			want: db.ErrPricesNotFound,
 		},

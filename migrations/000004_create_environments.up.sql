@@ -5,7 +5,7 @@ CREATE TABLE environments (
     type             env_type NOT NULL,
     status           env_status NOT NULL DEFAULT 'PROVISIONING',
     deleted_at       timestamptz,
-    provider         provider NOT NULL,
+    provider         text NOT NULL CHECK (provider <> ''),
     endpoint         text,
     backend          text,
     ram_mb           integer NOT NULL CHECK (ram_mb >= 0),

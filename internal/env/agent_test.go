@@ -18,8 +18,8 @@ type agent struct {
 	keyID    uuid.UUID
 }
 
-func (a agent) authenticated() db.AuthenticatedCaller {
-	return db.AuthenticatedCaller{ID: a.callerID, Role: db.RoleAgent, KeyID: a.keyID}
+func (a agent) authenticated() *db.AuthenticatedCaller {
+	return &db.AuthenticatedCaller{ID: a.callerID, Role: db.RoleAgent, KeyID: a.keyID}
 }
 
 func (f fixture) key(t *testing.T, callerID uuid.UUID, mutate func(*db.NewAPIKey)) uuid.UUID {
@@ -231,7 +231,7 @@ func TestAgentKeySeesOnlyItsEnvironments(t *testing.T) {
 		}
 	}
 
-	ownerSession := db.AuthenticatedCaller{ID: a.callerID, Role: db.RoleUser, Session: true}
+	ownerSession := &db.AuthenticatedCaller{ID: a.callerID, Role: db.RoleUser, Session: true}
 	for _, id := range []uuid.UUID{own, theirs, human} {
 		if _, _, err := f.m.Get(ctx, ownerSession, id); err != nil {
 			t.Errorf("owner Get(%s) error = %v", id, err)

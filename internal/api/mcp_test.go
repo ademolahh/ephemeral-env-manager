@@ -222,8 +222,8 @@ func TestMCPToolErrors(t *testing.T) {
 		{name: "invalid id", tool: "get_environment", args: map[string]any{"id": "nope"}, want: "invalid environment id"},
 		{name: "other caller's env", tool: "get_environment", args: map[string]any{"id": other.ID.String()}, want: "not found"},
 		{name: "delete other caller's env", tool: "delete_environment", args: map[string]any{"id": other.ID.String()}, want: "not found"},
-		{name: "bad status", tool: "list_environments", args: map[string]any{"status": "gone"}, want: "must be one of"},
-		{name: "empty cmd", tool: "exec", args: map[string]any{"id": other.ID.String(), "cmd": []string{}}, want: "cmd is required"},
+		{name: "bad status", tool: "list_environments", args: map[string]any{"status": "gone"}, want: "must be PROVISIONING"},
+		{name: "empty cmd", tool: "exec", args: map[string]any{"id": other.ID.String(), "cmd": []string{}}, want: "command is empty"},
 		{name: "unknown template version", tool: "get_template", args: map[string]any{"name": "clear-dashboard", "version": "v9"}, want: "not found"},
 	}
 
